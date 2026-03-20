@@ -116,6 +116,7 @@ class TTSPlaybackManager extends EventEmitter {
     novelId: number,
     settings: VoiceSettings
   ): Promise<void> {
+    console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements');
     try {
       // Stop any existing playback
       await this.stop();
@@ -127,6 +128,7 @@ class TTSPlaybackManager extends EventEmitter {
       this.novelId = novelId;
       this.voiceSettings = settings;
 
+      console.log('[TTSPlaybackManager] Starting foreground service...');
       // Start foreground service
       NativeTTSForegroundService.startService(
         'LNReader',
@@ -135,6 +137,7 @@ class TTSPlaybackManager extends EventEmitter {
         false
       );
 
+      console.log('[TTSPlaybackManager] Starting preloader...');
       // Start preloading
       this.preloader.preloadChapter(textElements, settings);
       
@@ -148,9 +151,11 @@ class TTSPlaybackManager extends EventEmitter {
       // Emit progress
       this.emitProgress();
 
+      console.log('[TTSPlaybackManager] Waiting for preloader ready event...');
       // Wait for first element to be ready, then play
       // The preloader will emit 'ready' event which triggers playback
-    } catch {
+    } catch (error) {
+      console.error('[TTSPlaybackManager] Error in play():', error);
       this.emitError('Failed to start playback', 'PLAY_ERROR');
       this.setState('idle');
     }

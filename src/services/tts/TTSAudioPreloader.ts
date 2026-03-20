@@ -70,6 +70,7 @@ class TTSAudioPreloader extends EventEmitter {
     settings: VoiceSettings,
     options?: Partial<PreloadOptions>
   ): Promise<void> {
+    console.log('[TTSAudioPreloader] preloadChapter() called with', textElements.length, 'elements');
     // Merge options
     this.options = { ...this.options, ...options };
     this.settings = settings;
@@ -84,11 +85,13 @@ class TTSAudioPreloader extends EventEmitter {
     this.resetStats();
 
     try{
+      console.log('[TTSAudioPreloader] Starting priority preload...');
       // Phase 1: Priority elements (first N)
       await this.preloadPriority();
 
       if (this.isCancelled) return;
 
+      console.log('[TTSAudioPreloader] Starting background preload...');
       // Phase 2: Remaining elements in background
       await this.preloadBackground();
 
@@ -96,6 +99,7 @@ class TTSAudioPreloader extends EventEmitter {
         this.emit('complete', { type: 'complete', stats: this.getProgress() });
       }
     } catch (error) {
+      console.error('[TTSAudioPreloader] Error in preloadChapter():', error);
       throw error;
     } finally {
       this.isPreloading = false;
@@ -176,13 +180,17 @@ class TTSAudioPreloader extends EventEmitter {
    */
   private async preloadPriority(): Promise<void> {
     const priorityItems = this.queue.slice(0, this.options.priorityCount);
+    console.log('[TTSAudioPreloader] Generating', priorityItems.length, 'priority items');
     
     await this.generateBatch(priorityItems, 2);  // Low concurrency for priority
     
     // Emit 'ready' event after first element is ready
     const firstReady = this.queue.find(item => item.status === 'ready');
     if (firstReady) {
+      console.log('[TTSAudioPreloader] First element ready at index', firstReady.index, 'URI:', firstReady.uri);
       this.emit('ready', { type: 'ready', index: firstReady.index, uri: firstReady.uri! });
+    } else {
+      console.warn('[TTSAudioPreloader] No ready items after priority generation');
     }
   }
 
