@@ -16,7 +16,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.lnreader.R
+import com.rajarsheechatterjee.LNReader.R
 
 class TTSForegroundService : Service() {
 
