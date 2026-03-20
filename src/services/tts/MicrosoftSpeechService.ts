@@ -51,8 +51,7 @@ class MicrosoftSpeechService {
       this.config = config;
       this.isInitialized = true;
       return true;
-    } catch (error) {
-      console.error('[MSSpeech] Initialization failed:', error);
+    } catch {
       this.isInitialized = false;
       return false;
     }
@@ -194,7 +193,6 @@ class MicrosoftSpeechService {
   async speak(text: string, options: SpeakOptions = {}): Promise<void> {
     if (!this.isReady()) {
       const error = 'Microsoft Speech service not initialized';
-      console.error('[MSSpeech]', error);
       options.onError?.(error);
       throw new Error(error);
     }
@@ -257,10 +255,9 @@ class MicrosoftSpeechService {
               }
             }
             if (status.didJustFinish) {
-              console.log('[MSSpeech] Playback completed');
               options.onDone?.();
               // Clean up temp file
-              FileSystem.deleteAsync(tempFilePath, { idempotent: true }).catch(console.error);
+              FileSystem.deleteAsync(tempFilePath, { idempotent: true }).catch(() => {});
             }
           }
         },
@@ -273,7 +270,6 @@ class MicrosoftSpeechService {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[MSSpeech] Speak error:', errorMsg);
       options.onError?.(errorMsg);
       throw error;
     }
@@ -287,8 +283,8 @@ class MicrosoftSpeechService {
       try {
         await this.currentSound.stopAsync();
         await this.currentSound.unloadAsync();
-      } catch (error) {
-        console.error('[MSSpeech] Error stopping audio:', error);
+      } catch {
+        // Ignore errors during cleanup
       }
       this.currentSound = null;
     }
@@ -335,7 +331,6 @@ class MicrosoftSpeechService {
         shortName: voice.ShortName,
       }));
     } catch (error) {
-      console.error('[MSSpeech] Failed to get voices:', error);
       throw error;
     }
   }
@@ -355,8 +350,7 @@ class MicrosoftSpeechService {
       });
 
       return response.ok;
-    } catch (error) {
-      console.error('[MSSpeech] Credential validation failed:', error);
+    } catch {
       return false;
     }
   }

@@ -24,7 +24,6 @@ import {
   initialChapterReaderSettings,
 } from '@hooks/persisted/useSettings';
 import { getBatteryLevelSync } from 'react-native-device-info';
-import * as Speech from 'expo-speech';
 import { PLUGIN_STORAGE } from '@utils/Storages';
 import { useChapterContext } from '../ChapterContext';
 import {
@@ -37,6 +36,8 @@ import {
 } from '@utils/ttsNotification';
 import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
 import { showToast } from '@utils/showToast';
+import { ttsPlaybackManager, PlaybackEvent } from '@services/tts/TTSPlaybackManager';
+import { VoiceSettings, TTSEngine } from '@services/tts/TTSAudioGenerator';
 
 type WebViewPostEvent = {
   type: string;
@@ -121,21 +122,25 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
   useEffect(() => {
     const playListener = ttsMediaEmitter.addListener('TTSPlay', () => {
+      ttsPlaybackManager.resume();
       webViewRef.current?.injectJavaScript(`
         if (window.tts && !tts.reading) { tts.resume(); }
       `);
     });
     const pauseListener = ttsMediaEmitter.addListener('TTSPause', () => {
+      ttsPlaybackManager.pause();
       webViewRef.current?.injectJavaScript(`
         if (window.tts && tts.reading) { tts.pause(); }
       `);
     });
     const stopListener = ttsMediaEmitter.addListener('TTSStop', () => {
+      ttsPlaybackManager.stop();
       webViewRef.current?.injectJavaScript(`
         if (window.tts) { tts.stop(); }
       `);
     });
     const rewindListener = ttsMediaEmitter.addListener('TTSRewind', () => {
+      ttsPlaybackManager.seekToPrevious();
       webViewRef.current?.injectJavaScript(`
         if (window.tts && tts.started) { tts.rewind(); }
       `);
@@ -148,6 +153,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       `);
     });
     const nextListener = ttsMediaEmitter.addListener('TTSNext', () => {
+      ttsPlaybackManager.seekToNext();
       webViewRef.current?.injectJavaScript(`
         if (window.tts && window.reader && window.reader.nextChapter) {
           window.reader.post({ type: 'next', autoStartTTS: true });
@@ -158,6 +164,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       'TTSSeekTo',
       (event: { position: number }) => {
         const position = event.position;
+        // Note: seekToIndex takes index, not position in seconds
+        // For now, maintain WebView behavior
         webViewRef.current?.injectJavaScript(`
           if (window.tts && tts.started) { tts.seekTo(${position}); }
         `);
@@ -188,9 +196,11 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   useEffect(() => {
     return () => {
       dismissTTSNotification();
+      // Stop playback on unmount
+      ttsPlaybackManager.stop();
       // Cleanup Microsoft Speech service
       if (microsoftSpeechService.isReady()) {
-        microsoftSpeechService.dispose().catch(console.error);
+        microsoftSpeechService.dispose();
       }
     };
   }, []);
@@ -277,103 +287,110 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
     return () => subscription.remove();
   }, [webViewRef]);
 
-  const stopTTS = async () => {
-    Speech.stop();
-    if (microsoftSpeechService.isReady()) {
-      await microsoftSpeechService.stop();
-    }
-  };
-
-  const speakText = async (text: string) => {
-    const engine = readerSettingsRef.current.tts?.engine || 'expo';
-    const integrationSettings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
-    
-    const onDoneCallback = () => {
-      const isBackground =
-        appStateRef.current === 'background' ||
-        appStateRef.current === 'inactive';
-
-      if (
-        isBackground &&
-        ttsQueueRef.current.length > 0 &&
-        ttsQueueIndexRef.current + 1 < ttsQueueRef.current.length
-      ) {
-        const nextIndex = ttsQueueIndexRef.current + 1;
-        const nextText = ttsQueueRef.current[nextIndex];
-        if (nextText) {
-          ttsQueueIndexRef.current = nextIndex;
-          speakText(nextText);
-          return;
+  // TTSPlaybackManager event listeners
+  useEffect(() => {
+    const handleStateChange = (event: PlaybackEvent) => {
+      if (event.type === 'stateChange' && event.state) {
+        const isPlaying = event.state === 'playing';
+        const isLoading = event.state === 'loading';
+        isTTSReadingRef.current = isPlaying || isLoading;
+        
+        updateTTSPlaybackState(isPlaying);
+        
+        if (isPlaying || isLoading) {
+          updateTTSNotification({
+            novelName: novel?.name || 'Unknown',
+            chapterName: chapter.name,
+            coverUri: novel?.cover || '',
+            isPlaying: isPlaying,
+          });
         }
       }
+    };
 
-      if (isBackground) {
+    const handleElementChange = (event: PlaybackEvent) => {
+      if (event.type === 'elementChange' && event.index !== undefined) {
+        // Update WebView to trigger next element
+        webViewRef.current?.injectJavaScript('tts.next?.()');
+      }
+    };
+
+    const handleQueueEnd = (event: PlaybackEvent) => {
+      if (event.type === 'queueEnd') {
         isTTSReadingRef.current = false;
         dismissTTSNotification();
         webViewRef.current?.injectJavaScript('tts.stop?.()');
-        return;
       }
-
-      webViewRef.current?.injectJavaScript('tts.next?.()');
     };
 
-    // Try Microsoft Speech if selected and configured
-    if (engine === 'microsoft' && integrationSettings?.microsoftSpeech?.enabled) {
-      try {
-        // Ensure Microsoft Speech is initialized
+    const handleError = (event: PlaybackEvent) => {
+      if (event.type === 'error') {
+        showToast(event.message || 'TTS error occurred', 'error');
+        isTTSReadingRef.current = false;
+        dismissTTSNotification();
+      }
+    };
+
+    ttsPlaybackManager.on('stateChange', handleStateChange);
+    ttsPlaybackManager.on('elementChange', handleElementChange);
+    ttsPlaybackManager.on('queueEnd', handleQueueEnd);
+    ttsPlaybackManager.on('error', handleError);
+
+    return () => {
+      ttsPlaybackManager.off('stateChange', handleStateChange);
+      ttsPlaybackManager.off('elementChange', handleElementChange);
+      ttsPlaybackManager.off('queueEnd', handleQueueEnd);
+      ttsPlaybackManager.off('error', handleError);
+    };
+  }, [novel?.name, novel?.cover, chapter.name, webViewRef]);
+
+  const stopTTS = async () => {
+    await ttsPlaybackManager.stop();
+  };
+
+  const speakText = async (text: string) => {
+    const engine = readerSettingsRef.current.tts?.engine || 'expo' as TTSEngine;
+    const integrationSettings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+    
+    // Build voice settings for PlaybackManager
+    let voice = '';
+    if (engine === 'microsoft') {
+      voice = readerSettingsRef.current.tts?.microsoftVoice?.shortName || '';
+      
+      // Ensure Microsoft Speech is initialized if needed
+      if (integrationSettings?.microsoftSpeech?.enabled) {
         if (!microsoftSpeechService.isReady()) {
-          const initialized = microsoftSpeechService.initialize({
+          microsoftSpeechService.initialize({
             subscriptionKey: integrationSettings.microsoftSpeech.subscriptionKey!,
             region: integrationSettings.microsoftSpeech.region!,
-            voice: readerSettingsRef.current.tts?.microsoftVoice?.shortName,
+            voice: voice,
           });
-
-          if (!initialized) {
-            throw new Error('Microsoft Speech initialization failed');
-          }
         }
-
-        // Speak using Microsoft Speech
-        await microsoftSpeechService.speak(text, {
-          voice: readerSettingsRef.current.tts?.microsoftVoice?.shortName,
-          pitch: readerSettingsRef.current.tts?.pitch || 1,
-          rate: readerSettingsRef.current.tts?.rate || 1,
-          onStart: () => {
-            // Notify WebView that playback started
-            webViewRef.current?.injectJavaScript(`
-              if (window.tts && window.tts.onPlaybackStart) {
-                window.tts.onPlaybackStart();
-              }
-            `);
-          },
-          onDone: onDoneCallback,
-          onError: (error) => {
-            console.error('[WebViewReader] Microsoft Speech error:', error);
-            // Fallback to Expo Speech
-            showToast('Microsoft Speech failed, using default voice', 'warning');
-            Speech.speak(text, {
-              onDone: onDoneCallback,
-              voice: readerSettingsRef.current.tts?.voice?.identifier,
-              pitch: readerSettingsRef.current.tts?.pitch || 1,
-              rate: readerSettingsRef.current.tts?.rate || 1,
-            });
-          },
-        });
-        return;
-      } catch (error) {
-        console.error('[WebViewReader] Failed to use Microsoft Speech:', error);
-        showToast('Falling back to Expo Speech', 'info');
-        // Fall through to Expo Speech
       }
+    } else {
+      voice = readerSettingsRef.current.tts?.voice?.identifier || '';
     }
 
-    // Default to Expo Speech
-    Speech.speak(text, {
-      onDone: onDoneCallback,
-      voice: readerSettingsRef.current.tts?.voice?.identifier,
+    const voiceSettings: VoiceSettings = {
+      voice,
       pitch: readerSettingsRef.current.tts?.pitch || 1,
       rate: readerSettingsRef.current.tts?.rate || 1,
-    });
+      engine,
+    };
+
+    // Use PlaybackManager to play single text element
+    // For now, maintain compatibility with WebView queue - single element playback
+    try {
+      await ttsPlaybackManager.play(
+        [text],
+        0,
+        chapter.id,
+        novel?.id || 0,
+        voiceSettings
+      );
+    } catch {
+      // Playback error handled by event listeners
+    }
   };
   const isRTL = plugin?.lang === 'Arabic' || plugin?.lang === 'Hebrew';
   const readerDir = isRTL ? 'rtl' : 'ltr';
