@@ -42,6 +42,7 @@ class TTSPlaybackManager extends EventEmitter {
   private voiceSettings: VoiceSettings | null = null;
   private preloader: TTSAudioPreloader;
   private isInitialized: boolean = false;
+  private idleTimer: NodeJS.Timeout | null = null;
 
   private constructor() {
     super();
@@ -126,6 +127,12 @@ class TTSPlaybackManager extends EventEmitter {
   ): Promise<void> {
     console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements');
     try {
+      // Clear any pending idle timer from previous stop()
+      if (this.idleTimer) {
+        clearTimeout(this.idleTimer);
+        this.idleTimer = null;
+      }
+
       // Stop any existing playback
       await this.stop();
 
@@ -239,8 +246,8 @@ class TTSPlaybackManager extends EventEmitter {
       
       this.emit('queueEnd', { type: 'queueEnd', reason: 'stopped' });
 
-      // Return to idle
-      setTimeout(() => this.setState('idle'), 100);
+      // Return to idle after a short delay
+      this.idleTimer = setTimeout(() => this.setState('idle'), 100);
     } catch {
       // Error handling
     }
