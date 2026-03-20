@@ -48,6 +48,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
 
     private val mediaReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            android.util.Log.d("NativeTTSMediaControl", "BroadcastReceiver received: ${intent.action}")
             when (intent.action) {
                 ACTION_PLAY -> {
                     isPlaying = true
@@ -62,7 +63,10 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
                 ACTION_STOP -> sendEvent("TTSStop")
                 ACTION_PREV -> sendEvent("TTSPrev")
                 ACTION_NEXT -> sendEvent("TTSNext")
-                ACTION_REWIND -> sendEvent("TTSRewind")
+                ACTION_REWIND -> {
+                    android.util.Log.d("NativeTTSMediaControl", "Sending TTSRewind event")
+                    sendEvent("TTSRewind")
+                }
             }
         }
     }
@@ -128,6 +132,10 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
                     override fun onSkipToNext() {
                         sendEvent("TTSNext")
                     }
+                    
+                    override fun onRewind() {
+                        sendEvent("TTSRewind")
+                    }
 
                     override fun onSeekTo(pos: Long) {
                         // pos is in our scaled ms domain: elementIndex * 1000
@@ -191,6 +199,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
                 PlaybackStateCompat.ACTION_STOP or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_REWIND or
                 PlaybackStateCompat.ACTION_SEEK_TO
             )
             .setState(
@@ -257,7 +266,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
             .setStyle(
                 MediaStyle()
                     .setMediaSession(session.sessionToken)
-                    .setShowActionsInCompactView(1, 2, 3)
+                    .setShowActionsInCompactView(0, 2, 3) // Previous, Play/Pause, Next
             )
             .build()
 
@@ -325,6 +334,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
     }
 
     override fun dismiss() {
+        android.util.Log.d("NativeTTSMediaControl", "dismiss() called - releasing MediaSession and canceling notification")
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null

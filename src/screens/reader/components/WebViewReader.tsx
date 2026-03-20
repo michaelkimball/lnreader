@@ -122,56 +122,76 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
   useEffect(() => {
     const playListener = ttsMediaEmitter.addListener('TTSPlay', () => {
+      // Resume playback (expo-av true pause)
       ttsPlaybackManager.resume();
-      webViewRef.current?.injectJavaScript(`
-        if (window.tts && !tts.reading) { tts.resume(); }
-      `);
     });
+    
     const pauseListener = ttsMediaEmitter.addListener('TTSPause', () => {
+      // Pause playback (expo-av true pause)
       ttsPlaybackManager.pause();
-      webViewRef.current?.injectJavaScript(`
-        if (window.tts && tts.reading) { tts.pause(); }
-      `);
     });
+    
     const stopListener = ttsMediaEmitter.addListener('TTSStop', () => {
-      console.log('[WebViewReader] TTSStop media button pressed');
-      ttsPlaybackManager.stop();
-      webViewRef.current?.injectJavaScript(`
-        if (window.tts) { tts.stop(); }
-      `);
+      console.log('[WebViewReader] TTSStop event received (from notification dismiss or stop button)');
+      // Use stopTTS() to properly clean up both RN and WebView
+      stopTTS();
     });
+    
     const rewindListener = ttsMediaEmitter.addListener('TTSRewind', () => {
-      ttsPlaybackManager.seekToPrevious();
+      console.log('[WebViewReader] TTSRewind notification button pressed');
+      // Stop current playback and go back one element
+      ttsPlaybackManager.stop(true); // Stop without emitting queueEnd
       webViewRef.current?.injectJavaScript(`
-        if (window.tts && tts.started) { tts.rewind(); }
+        console.log("[WebView] Rewind button - elementsRead:", tts.elementsRead, "started:", tts.started);
+        if (window.tts && tts.started && tts.elementsRead > 0) {
+          const targetIndex = Math.max(0, tts.elementsRead - 2);
+          console.log("[WebView] Seeking to:", targetIndex);
+          tts.seekTo(targetIndex);
+        } else {
+          console.log("[WebView] Rewind conditions not met");
+        }
       `);
     });
+    
     const prevListener = ttsMediaEmitter.addListener('TTSPrev', () => {
+      console.log('[WebViewReader] TTSPrev notification button pressed');
+      // Stop current playback and go back one element
+      ttsPlaybackManager.stop(true); // Stop without emitting queueEnd
       webViewRef.current?.injectJavaScript(`
-        if (window.tts && window.reader && window.reader.prevChapter) {
-          window.reader.post({ type: 'prev', autoStartTTS: true });
+        console.log("[WebView] Previous button - elementsRead:", tts.elementsRead, "started:", tts.started);
+        if (window.tts && tts.started && tts.elementsRead > 0) {
+          const targetIndex = Math.max(0, tts.elementsRead - 2);
+          console.log("[WebView] Seeking to:", targetIndex);
+          tts.seekTo(targetIndex);
+        } else {
+          console.log("[WebView] Previous conditions not met");
         }
       `);
     });
+    
     const nextListener = ttsMediaEmitter.addListener('TTSNext', () => {
-      ttsPlaybackManager.seekToNext();
+      console.log('[WebViewReader] TTSNext notification button pressed');
+      // Stop current playback before advancing to prevent double-next
+      ttsPlaybackManager.stop(true); // Stop without emitting queueEnd
       webViewRef.current?.injectJavaScript(`
-        if (window.tts && window.reader && window.reader.nextChapter) {
-          window.reader.post({ type: 'next', autoStartTTS: true });
+        console.log("[WebView] Next button - elementsRead:", tts.elementsRead, "totalElements:", tts.totalElements);
+        if (window.tts && tts.started) {
+          tts.next();
         }
       `);
     });
+    
     const seekToListener = ttsMediaEmitter.addListener(
       'TTSSeekTo',
       (event: { position: number }) => {
         const position = event.position;
-        // Note: seekToIndex takes index, not position in seconds
-        // For now, maintain WebView behavior
+        // Seek to specific index in WebView queue
         webViewRef.current?.injectJavaScript(`
           if (window.tts && tts.started) { tts.seekTo(${position}); }
         `);
       },
     );
+    
     return () => {
       playListener.remove();
       pauseListener.remove();
