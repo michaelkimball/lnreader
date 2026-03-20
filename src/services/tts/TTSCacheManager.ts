@@ -6,7 +6,6 @@
  */
 
 import * as FileSystem from 'expo-file-system';
-import { MMKVLoader } from 'react-native-mmkv-storage';
 
 export interface CacheMetadata {
   key: string;
@@ -40,7 +39,6 @@ class TTSCacheManager {
   private cacheDir: string;
   private metadataFile: string;
   private metadata: Map<string, CacheMetadata> = new Map();
-  private storage: MMKVLoader;
   private maxCacheSize: number = 100 * 1024 * 1024; // 100MB default
   private currentCacheSize: number = 0;
   private hits: number = 0;
@@ -49,7 +47,6 @@ class TTSCacheManager {
   private constructor() {
     this.cacheDir = `${FileSystem.cacheDirectory}tts/cache/`;
     this.metadataFile = `${this.cacheDir}metadata.json`;
-    this.storage = new MMKVLoader().initialize();
     this.initialize();
   }
 
