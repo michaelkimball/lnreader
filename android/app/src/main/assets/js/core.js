@@ -156,8 +156,17 @@ window.tts = new (function () {
     if (!ele.hasChildNodes()) {
       return false;
     }
+    // Skip elements that contain images (they're not readable text)
+    if (ele.querySelector && ele.querySelector('img, picture, svg')) {
+      return false;
+    }
     for (let i = 0; i < ele.childNodes.length; i++) {
-      if (!this.readableNodeNames.includes(ele.childNodes.item(i).nodeName)) {
+      const childNode = ele.childNodes.item(i);
+      // Skip if child is an image or other non-text element
+      if (childNode.nodeName === 'IMG' || childNode.nodeName === 'PICTURE' || childNode.nodeName === 'SVG') {
+        return false;
+      }
+      if (!this.readableNodeNames.includes(childNode.nodeName)) {
         return false;
       }
     }
@@ -322,8 +331,12 @@ window.tts = new (function () {
     const traverse = el => {
       if (!el) return;
       if (this.readable(el)) {
+        // If this element is readable, add it and DON'T traverse children
+        // (to avoid reading the same text from parent and child)
         elements.push(el);
+        return; // Don't traverse children of readable elements
       }
+      // Only traverse children if this element itself is not readable
       for (let i = 0; i < el.children.length; i++) {
         traverse(el.children[i]);
       }

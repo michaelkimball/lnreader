@@ -69,6 +69,16 @@ const SettingsScreen = ({ navigation }: SettingsScreenProps) => {
           theme={theme}
         />
         <List.Item
+          title="Integrations"
+          icon="api"
+          onPress={() =>
+            navigation.navigate('SettingsStack', {
+              screen: 'IntegrationsSettings',
+            })
+          }
+          theme={theme}
+        />
+        <List.Item
           title={getString('common.backup')}
           icon="cloud-upload-outline"
           onPress={() =>

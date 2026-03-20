@@ -12,6 +12,16 @@ export const BROWSE_SETTINGS = 'BROWSE_SETTINGS';
 export const LIBRARY_SETTINGS = 'LIBRARY_SETTINGS';
 export const CHAPTER_GENERAL_SETTINGS = 'CHAPTER_GENERAL_SETTINGS';
 export const CHAPTER_READER_SETTINGS = 'CHAPTER_READER_SETTINGS';
+export const INTEGRATION_SETTINGS = 'INTEGRATION_SETTINGS';
+
+export type TTSEngine = 'expo' | 'microsoft';
+
+export interface MicrosoftSpeechVoice {
+  name: string;
+  displayName: string;
+  locale: string;
+  shortName: string;
+}
 
 export interface AppSettings {
   /**
@@ -59,6 +69,14 @@ export interface BrowseSettings {
   showMyAnimeList: boolean;
   showAniList: boolean;
   globalSearchConcurrency?: number;
+}
+
+export interface IntegrationSettings {
+  microsoftSpeech?: {
+    subscriptionKey?: string;
+    region?: string;
+    enabled?: boolean;
+  };
 }
 
 export interface LibrarySettings {
@@ -109,7 +127,9 @@ export interface ChapterReaderSettings {
   customJS: string;
   customThemes: ReaderTheme[];
   tts?: {
+    engine?: TTSEngine;
     voice?: Voice;
+    microsoftVoice?: MicrosoftSpeechVoice;
     rate?: number;
     pitch?: number;
     autoPageAdvance?: boolean;
@@ -169,6 +189,14 @@ const initialBrowseSettings: BrowseSettings = {
   globalSearchConcurrency: 3,
 };
 
+const initialIntegrationSettings: IntegrationSettings = {
+  microsoftSpeech: {
+    subscriptionKey: '',
+    region: '',
+    enabled: false,
+  },
+};
+
 export const initialChapterGeneralSettings: ChapterGeneralSettings = {
   keepScreenOn: true,
   fullScreenMode: true,
@@ -200,6 +228,7 @@ export const initialChapterReaderSettings: ChapterReaderSettings = {
   customJS: '',
   customThemes: [],
   tts: {
+    engine: 'expo',
     rate: 1,
     pitch: 1,
     autoPageAdvance: false,
@@ -318,5 +347,18 @@ export const useChapterReaderSettings = () => {
     setChapterReaderSettings,
     saveCustomReaderTheme,
     deleteCustomReaderTheme,
+  };
+};
+
+export const useIntegrationSettings = () => {
+  const [integrationSettings = initialIntegrationSettings, setSettings] =
+    useMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+
+  const setIntegrationSettings = (values: Partial<IntegrationSettings>) =>
+    setSettings({ ...integrationSettings, ...values });
+
+  return {
+    ...integrationSettings,
+    setIntegrationSettings,
   };
 };

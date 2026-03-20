@@ -103,6 +103,8 @@ const BottomSheet: React.FC<BottomSheetProps> = ({
       enableDynamicSizing={false}
       enableOverDrag={false}
       snapPoints={safeSnapPoints}
+      activeOffsetY={[-10, 10]}
+      failOffsetX={[-10, 10]}
       {...otherProps}
     >
       {children}

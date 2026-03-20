@@ -3,6 +3,7 @@ export const BROWSE_SETTINGS = 'BROWSE_SETTINGS';
 export const LIBRARY_SETTINGS = 'LIBRARY_SETTINGS';
 export const CHAPTER_GENERAL_SETTINGS = 'CHAPTER_GENERAL_SETTINGS';
 export const CHAPTER_READER_SETTINGS = 'CHAPTER_READER_SETTINGS';
+export const INTEGRATION_SETTINGS = 'INTEGRATION_SETTINGS';
 
 export const initialAppSettings = {
   incognitoMode: false,
@@ -26,6 +27,14 @@ export const initialBrowseSettings = {
   showMyAnimeList: true,
   showAniList: true,
   globalSearchConcurrency: 3,
+};
+
+export const initialIntegrationSettings = {
+  microsoftSpeech: {
+    subscriptionKey: '',
+    region: '',
+    enabled: false,
+  },
 };
 
 export const defaultLibrarySettings = {
@@ -70,6 +79,7 @@ export const initialChapterReaderSettings = {
   customJS: '',
   customThemes: [],
   tts: {
+    engine: 'expo',
     rate: 1,
     pitch: 1,
     autoPageAdvance: false,
@@ -108,10 +118,16 @@ export const useChapterReaderSettings = jest.fn(() => ({
   deleteCustomReaderTheme: jest.fn(),
 }));
 
+export const useIntegrationSettings = jest.fn(() => ({
+  ...initialIntegrationSettings,
+  setIntegrationSettings: jest.fn(),
+}));
+
 export default {
   useAppSettings,
   useBrowseSettings,
   useLibrarySettings,
   useChapterGeneralSettings,
   useChapterReaderSettings,
+  useIntegrationSettings,
 };

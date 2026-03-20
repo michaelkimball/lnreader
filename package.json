@@ -71,6 +71,7 @@
     "dayjs": "^1.11.19",
     "drizzle-orm": "1.0.0-beta.13-f728631",
     "expo": "^54.0.33",
+    "expo-av": "^16.0.8",
     "expo-clipboard": "~8.0.8",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.21",

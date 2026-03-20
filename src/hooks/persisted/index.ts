@@ -8,7 +8,9 @@ export {
   useLibrarySettings,
   useChapterGeneralSettings,
   useChapterReaderSettings,
+  useIntegrationSettings,
 } from './useSettings';
+export type { TTSEngine, MicrosoftSpeechVoice } from './useSettings';
 export { default as usePlugins } from './usePlugins';
 export { getTracker, useTracker } from './useTracker';
 export { useTrackedNovel } from './useTrackedNovel';

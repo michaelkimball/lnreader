@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { View, StyleSheet, Text, ScrollView, TouchableOpacity } from 'react-native';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Slider from '@react-native-community/slider';
@@ -8,11 +8,15 @@ import {
   useTheme,
   useChapterGeneralSettings,
   useChapterReaderSettings,
+  useIntegrationSettings,
+  TTSEngine,
+  MicrosoftSpeechVoice,
 } from '@hooks/persisted';
 import { getString } from '@strings/translations';
 import { List, Button } from '@components/index';
 import { Portal, Modal, Chip } from 'react-native-paper';
 import ReaderSheetPreferenceItem from './ReaderSheetPreferenceItem';
+import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
 
 interface VoicePickerModalProps {
   visible: boolean;
@@ -188,6 +192,170 @@ const VoicePickerModal: React.FC<VoicePickerModalProps> = ({
   );
 };
 
+interface MicrosoftVoicePickerModalProps {
+  visible: boolean;
+  onDismiss: () => void;
+  voices: MicrosoftSpeechVoice[];
+  onSelect: (voice: MicrosoftSpeechVoice) => void;
+  currentVoice?: MicrosoftSpeechVoice;
+}
+
+const MicrosoftVoicePickerModal: React.FC<MicrosoftVoicePickerModalProps> = ({
+  visible,
+  onDismiss,
+  voices,
+  onSelect,
+  currentVoice
+}) => {
+  const theme = useTheme();
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const systemLocale = getLocales()[0]?.languageCode || 'en';
+
+  const availableLanguages = useMemo(() => {
+    const languages = new Set<string>();
+    voices.forEach(voice => {
+      if (voice.locale) {
+        const lang = voice.locale.split('-')[0];
+        languages.add(lang);
+      }
+    });
+    return Array.from(languages).sort((a, b) => {
+      if (a === systemLocale) return -1;
+      if (b === systemLocale) return 1;
+      return a.localeCompare(b);
+    });
+  }, [voices, systemLocale]);
+
+  const filteredVoices = useMemo(() => {
+    if (selectedLanguages.length === 0) {
+      return voices.filter(voice => {
+        const lang = voice.locale?.split('-')[0];
+        return lang === systemLocale;
+      });
+    }
+
+    return voices.filter(voice => {
+      const lang = voice.locale?.split('-')[0];
+      return lang && selectedLanguages.includes(lang);
+    });
+  }, [voices, selectedLanguages, systemLocale]);
+
+  const toggleLanguage = (lang: string) => {
+    setSelectedLanguages(prev => {
+      if (prev.includes(lang)) {
+        return prev.filter(l => l !== lang);
+      } else {
+        return [...prev, lang];
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedLanguages([]);
+    }
+  }, [visible]);
+
+  return (
+    <Portal>
+      <Modal
+        visible={visible}
+        onDismiss={onDismiss}
+        contentContainerStyle={[
+          styles.modalContent,
+          { backgroundColor: theme.surface }
+        ]}
+      >
+        <Text style={[styles.modalTitle, { color: theme.onSurface }]}>
+          Select Microsoft Voice
+        </Text>
+
+        <View style={styles.languageFilterContainer}>
+          <Text style={[styles.filterLabel, { color: theme.onSurfaceVariant }]}>
+            Filter by language:
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.languageChipsScroll}
+          >
+            {availableLanguages.map(lang => {
+              const isSelected = selectedLanguages.includes(lang);
+              const isSystemLang = lang === systemLocale;
+              const showingSystemOnly = selectedLanguages.length === 0;
+              const isActive = isSelected || (showingSystemOnly && isSystemLang);
+
+              return (
+                <Chip
+                  key={lang}
+                  selected={isActive}
+                  onPress={() => toggleLanguage(lang)}
+                  style={[
+                    styles.languageChip,
+                    isActive && { backgroundColor: theme.primary }
+                  ]}
+                  textStyle={[
+                    styles.languageChipText,
+                    { color: isActive ? theme.onPrimary : theme.onSurface }
+                  ]}
+                >
+                  {lang.toUpperCase()}
+                  {isSystemLang && ' (System)'}
+                </Chip>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        <ScrollView style={styles.voiceList}>
+          {filteredVoices.length === 0 ? (
+            <Text style={[styles.noVoicesText, { color: theme.onSurfaceVariant }]}>
+              No voices available for selected languages
+            </Text>
+          ) : (
+            filteredVoices.map((voice, index) => (
+              <TouchableOpacity
+                key={index}
+                style={[
+                  styles.voiceItem,
+                  currentVoice?.shortName === voice.shortName && {
+                    backgroundColor: theme.surfaceVariant,
+                  }
+                ]}
+                onPress={() => {
+                  onSelect(voice);
+                  onDismiss();
+                }}
+              >
+                <View style={styles.voiceItemContent}>
+                  <Text style={[styles.voiceItemText, { color: theme.onSurface }]}>
+                    {voice.displayName}
+                  </Text>
+                  {voice.locale && (
+                    <Text style={[styles.voiceItemLanguage, { color: theme.onSurfaceVariant }]}>
+                      {voice.locale}
+                    </Text>
+                  )}
+                </View>
+                {currentVoice?.shortName === voice.shortName && (
+                  <Text style={[styles.checkIcon, { color: theme.primary }]}>✓</Text>
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+
+        <Button
+          title="Cancel"
+          mode="outlined"
+          onPress={onDismiss}
+          style={styles.cancelButton}
+        />
+      </Modal>
+    </Portal>
+  );
+};
+
 const TTSTab: React.FC = () => {
   const theme = useTheme();
   const {
@@ -196,9 +364,18 @@ const TTSTab: React.FC = () => {
   } = useChapterGeneralSettings();
 
   const { tts, setChapterReaderSettings } = useChapterReaderSettings();
+  const { microsoftSpeech } = useIntegrationSettings();
+  
   const [voices, setVoices] = useState<Voice[]>([]);
+  const [msVoices, setMsVoices] = useState<MicrosoftSpeechVoice[]>([]);
   const [voiceModalVisible, setVoiceModalVisible] = useState(false);
+  const [msVoiceModalVisible, setMsVoiceModalVisible] = useState(false);
+  const [loadingMsVoices, setLoadingMsVoices] = useState(false);
 
+  const selectedEngine: TTSEngine = tts?.engine || 'expo';
+  const isMicrosoftEnabled = microsoftSpeech?.enabled && microsoftSpeech.subscriptionKey && microsoftSpeech.region;
+
+  // Load Expo voices
   useEffect(() => {
     getAvailableVoicesAsync().then(res => {
       res.sort((a, b) => a.name.localeCompare(b.name));
@@ -206,8 +383,43 @@ const TTSTab: React.FC = () => {
     });
   }, []);
 
+  // Initialize and load Microsoft voices when enabled
+  useEffect(() => {
+    if (isMicrosoftEnabled && selectedEngine === 'microsoft') {
+      const initMicrosoft = async () => {
+        const initialized = microsoftSpeechService.initialize({
+          subscriptionKey: microsoftSpeech!.subscriptionKey!,
+          region: microsoftSpeech!.region!,
+          voice: tts?.microsoftVoice?.shortName,
+        });
+
+        if (initialized) {
+          setLoadingMsVoices(true);
+          try {
+            const voices = await microsoftSpeechService.getVoices();
+            setMsVoices(voices);
+          } catch (error) {
+            console.error('[TTSTab] Failed to load Microsoft voices:', error);
+          } finally {
+            setLoadingMsVoices(false);
+          }
+        }
+      };
+
+      initMicrosoft();
+    }
+  }, [isMicrosoftEnabled, selectedEngine, microsoftSpeech, tts?.microsoftVoice?.shortName]);
+
   const handleVoiceSelect = useCallback((voice: Voice) => {
     setChapterReaderSettings({ tts: { ...tts, voice } });
+  }, [tts, setChapterReaderSettings]);
+
+  const handleMsVoiceSelect = useCallback((voice: MicrosoftSpeechVoice) => {
+    setChapterReaderSettings({ tts: { ...tts, microsoftVoice: voice } });
+  }, [tts, setChapterReaderSettings]);
+
+  const handleEngineChange = useCallback((engine: TTSEngine) => {
+    setChapterReaderSettings({ tts: { ...tts, engine } });
   }, [tts, setChapterReaderSettings]);
 
   return (
@@ -231,17 +443,63 @@ const TTSTab: React.FC = () => {
 
           {TTSEnable && (
             <>
+              {/* TTS Engine Selector */}
               <TouchableOpacity
                 style={styles.settingItem}
-                onPress={() => setVoiceModalVisible(true)}
+                onPress={() => {
+                  const newEngine: TTSEngine = selectedEngine === 'expo' ? 'microsoft' : 'expo';
+                  if (newEngine === 'microsoft' && !isMicrosoftEnabled) {
+                    // Can't switch to Microsoft if not configured
+                    return;
+                  }
+                  handleEngineChange(newEngine);
+                }}
               >
                 <Text style={[styles.label, { color: theme.onSurface }]}>
-                  Voice
+                  TTS Engine
                 </Text>
-                <Text style={[styles.value, { color: theme.onSurfaceVariant }]}>
-                  {tts?.voice?.name || 'System'}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={[styles.value, { color: theme.onSurfaceVariant }]}>
+                    {selectedEngine === 'expo' ? 'Expo Speech' : 'Microsoft Speech'}
+                  </Text>
+                  {!isMicrosoftEnabled && (
+                    <Text style={[styles.value, { color: theme.error, fontSize: 12 }]}>
+                      (MS not configured)
+                    </Text>
+                  )}
+                </View>
               </TouchableOpacity>
+
+              {/* Voice Selector - conditional based on engine */}
+              {selectedEngine === 'expo' ? (
+                <TouchableOpacity
+                  style={styles.settingItem}
+                  onPress={() => setVoiceModalVisible(true)}
+                >
+                  <Text style={[styles.label, { color: theme.onSurface }]}>
+                    Voice
+                  </Text>
+                  <Text style={[styles.value, { color: theme.onSurfaceVariant }]}>
+                    {tts?.voice?.name || 'System'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.settingItem}
+                  onPress={() => setMsVoiceModalVisible(true)}
+                  disabled={!isMicrosoftEnabled || loadingMsVoices}
+                >
+                  <Text style={[
+                    styles.label,
+                    { color: (!isMicrosoftEnabled || loadingMsVoices) ? theme.onSurfaceVariant : theme.onSurface }
+                  ]}>
+                    Microsoft Voice
+                  </Text>
+                  <Text style={[styles.value, { color: theme.onSurfaceVariant }]}>
+                    {loadingMsVoices ? 'Loading...' : (tts?.microsoftVoice?.displayName || 'Select voice')}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
               <View style={styles.sliderSection}>
                 <Text style={[styles.sliderLabel, { color: theme.onSurface }]}>
@@ -256,7 +514,7 @@ const TTSTab: React.FC = () => {
                   minimumTrackTintColor={theme.primary}
                   maximumTrackTintColor={theme.surfaceVariant}
                   thumbTintColor={theme.primary}
-                  onSlidingComplete={value =>
+                  onValueChange={value =>
                     setChapterReaderSettings({ tts: { ...tts, rate: value } })
                   }
                 />
@@ -275,7 +533,7 @@ const TTSTab: React.FC = () => {
                   minimumTrackTintColor={theme.primary}
                   maximumTrackTintColor={theme.surfaceVariant}
                   thumbTintColor={theme.primary}
-                  onSlidingComplete={value =>
+                  onValueChange={value =>
                     setChapterReaderSettings({ tts: { ...tts, pitch: value } })
                   }
                 />
@@ -310,6 +568,7 @@ const TTSTab: React.FC = () => {
                   onPress={() => {
                     setChapterReaderSettings({
                       tts: {
+                        engine: 'expo',
                         pitch: 1,
                         rate: 1,
                         voice: { name: 'System', language: 'System' } as Voice,
@@ -334,6 +593,14 @@ const TTSTab: React.FC = () => {
         voices={voices}
         onSelect={handleVoiceSelect}
         currentVoice={tts?.voice}
+      />
+
+      <MicrosoftVoicePickerModal
+        visible={msVoiceModalVisible}
+        onDismiss={() => setMsVoiceModalVisible(false)}
+        voices={msVoices}
+        onSelect={handleMsVoiceSelect}
+        currentVoice={tts?.microsoftVoice}
       />
     </>
   );
@@ -366,14 +633,16 @@ const styles = StyleSheet.create({
   },
   sliderSection: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 16,
+    marginVertical: 4,
   },
   sliderLabel: {
     fontSize: 16,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   slider: {
-    height: 40,
+    height: 50,
+    width: '100%',
   },
   resetButtonContainer: {
     paddingHorizontal: 16,

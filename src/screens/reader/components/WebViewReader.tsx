@@ -16,8 +16,10 @@ import { MMKVStorage, getMMKVObject } from '@utils/mmkv/mmkv';
 import {
   CHAPTER_GENERAL_SETTINGS,
   CHAPTER_READER_SETTINGS,
+  INTEGRATION_SETTINGS,
   ChapterGeneralSettings,
   ChapterReaderSettings,
+  IntegrationSettings,
   initialChapterGeneralSettings,
   initialChapterReaderSettings,
 } from '@hooks/persisted/useSettings';
@@ -33,6 +35,8 @@ import {
   dismissTTSNotification,
   ttsMediaEmitter,
 } from '@utils/ttsNotification';
+import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
+import { showToast } from '@utils/showToast';
 
 type WebViewPostEvent = {
   type: string;
@@ -184,6 +188,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   useEffect(() => {
     return () => {
       dismissTTSNotification();
+      // Cleanup Microsoft Speech service
+      if (microsoftSpeechService.isReady()) {
+        microsoftSpeechService.dispose().catch(console.error);
+      }
     };
   }, []);
 
@@ -198,7 +206,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
           setReaderSettings(newSettings);
 
           // Stop any currently playing speech
-          Speech.stop();
+          stopTTS();
 
           // Update WebView settings
           webViewRef.current?.injectJavaScript(
@@ -269,36 +277,99 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
     return () => subscription.remove();
   }, [webViewRef]);
 
-  const speakText = (text: string) => {
-    Speech.speak(text, {
-      onDone() {
-        const isBackground =
-          appStateRef.current === 'background' ||
-          appStateRef.current === 'inactive';
+  const stopTTS = async () => {
+    Speech.stop();
+    if (microsoftSpeechService.isReady()) {
+      await microsoftSpeechService.stop();
+    }
+  };
 
-        if (
-          isBackground &&
-          ttsQueueRef.current.length > 0 &&
-          ttsQueueIndexRef.current + 1 < ttsQueueRef.current.length
-        ) {
-          const nextIndex = ttsQueueIndexRef.current + 1;
-          const nextText = ttsQueueRef.current[nextIndex];
-          if (nextText) {
-            ttsQueueIndexRef.current = nextIndex;
-            speakText(nextText);
-            return;
+  const speakText = async (text: string) => {
+    const engine = readerSettingsRef.current.tts?.engine || 'expo';
+    const integrationSettings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+    
+    const onDoneCallback = () => {
+      const isBackground =
+        appStateRef.current === 'background' ||
+        appStateRef.current === 'inactive';
+
+      if (
+        isBackground &&
+        ttsQueueRef.current.length > 0 &&
+        ttsQueueIndexRef.current + 1 < ttsQueueRef.current.length
+      ) {
+        const nextIndex = ttsQueueIndexRef.current + 1;
+        const nextText = ttsQueueRef.current[nextIndex];
+        if (nextText) {
+          ttsQueueIndexRef.current = nextIndex;
+          speakText(nextText);
+          return;
+        }
+      }
+
+      if (isBackground) {
+        isTTSReadingRef.current = false;
+        dismissTTSNotification();
+        webViewRef.current?.injectJavaScript('tts.stop?.()');
+        return;
+      }
+
+      webViewRef.current?.injectJavaScript('tts.next?.()');
+    };
+
+    // Try Microsoft Speech if selected and configured
+    if (engine === 'microsoft' && integrationSettings?.microsoftSpeech?.enabled) {
+      try {
+        // Ensure Microsoft Speech is initialized
+        if (!microsoftSpeechService.isReady()) {
+          const initialized = microsoftSpeechService.initialize({
+            subscriptionKey: integrationSettings.microsoftSpeech.subscriptionKey!,
+            region: integrationSettings.microsoftSpeech.region!,
+            voice: readerSettingsRef.current.tts?.microsoftVoice?.shortName,
+          });
+
+          if (!initialized) {
+            throw new Error('Microsoft Speech initialization failed');
           }
         }
 
-        if (isBackground) {
-          isTTSReadingRef.current = false;
-          dismissTTSNotification();
-          webViewRef.current?.injectJavaScript('tts.stop?.()');
-          return;
-        }
+        // Speak using Microsoft Speech
+        await microsoftSpeechService.speak(text, {
+          voice: readerSettingsRef.current.tts?.microsoftVoice?.shortName,
+          pitch: readerSettingsRef.current.tts?.pitch || 1,
+          rate: readerSettingsRef.current.tts?.rate || 1,
+          onStart: () => {
+            // Notify WebView that playback started
+            webViewRef.current?.injectJavaScript(`
+              if (window.tts && window.tts.onPlaybackStart) {
+                window.tts.onPlaybackStart();
+              }
+            `);
+          },
+          onDone: onDoneCallback,
+          onError: (error) => {
+            console.error('[WebViewReader] Microsoft Speech error:', error);
+            // Fallback to Expo Speech
+            showToast('Microsoft Speech failed, using default voice', 'warning');
+            Speech.speak(text, {
+              onDone: onDoneCallback,
+              voice: readerSettingsRef.current.tts?.voice?.identifier,
+              pitch: readerSettingsRef.current.tts?.pitch || 1,
+              rate: readerSettingsRef.current.tts?.rate || 1,
+            });
+          },
+        });
+        return;
+      } catch (error) {
+        console.error('[WebViewReader] Failed to use Microsoft Speech:', error);
+        showToast('Falling back to Expo Speech', 'info');
+        // Fall through to Expo Speech
+      }
+    }
 
-        webViewRef.current?.injectJavaScript('tts.next?.()');
-      },
+    // Default to Expo Speech
+    Speech.speak(text, {
+      onDone: onDoneCallback,
       voice: readerSettingsRef.current.tts?.voice?.identifier,
       pitch: readerSettingsRef.current.tts?.pitch || 1,
       rate: readerSettingsRef.current.tts?.rate || 1,
@@ -422,10 +493,10 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             }
             break;
           case 'pause-speak':
-            Speech.stop();
+            stopTTS();
             break;
           case 'stop-speak':
-            Speech.stop();
+            stopTTS();
             if (!autoStartTTSRef.current) {
               isTTSReadingRef.current = false;
               ttsQueueRef.current = [];
