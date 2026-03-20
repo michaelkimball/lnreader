@@ -130,6 +130,65 @@ class MicrosoftSpeechService {
   }
 
   /**
+   * Generate audio file from text without playing (for new architecture)
+   * Returns the file path for later playback with expo-av
+   */
+  async generateAudio(text: string, options: Omit<SpeakOptions, 'onStart' | 'onDone' | 'onError'> = {}): Promise<string> {
+    if (!this.isReady()) {
+      throw new Error('Microsoft Speech service not initialized');
+    }
+
+    try {
+      // Get access token
+      const token = await this.getAccessToken();
+
+      // Generate SSML
+      const ssml = this.generateSSML(text, options);
+
+      // Make TTS request
+      const endpoints = this.getEndpoints(this.config!.region);
+      
+      const response = await fetch(endpoints.tts, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
+        },
+        body: ssml,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`TTS request failed: ${response.status} - ${errorText}`);
+      }
+
+      // Get audio as blob
+      const arrayBuffer = await response.arrayBuffer();
+      
+      // Convert ArrayBuffer to base64
+      const bytes = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Audio = btoa(binary);
+
+      // Save to temporary file
+      const tempFilePath = `${FileSystem.cacheDirectory}tts_ms_${Date.now()}.mp3`;
+      await FileSystem.writeAsStringAsync(tempFilePath, base64Audio, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      // Return file path for later playback
+      return tempFilePath;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Microsoft Speech generation failed: ${errorMsg}`);
+    }
+  }
+
+  /**
    * Speak text using Microsoft Speech REST API
    */
   async speak(text: string, options: SpeakOptions = {}): Promise<void> {

@@ -139,53 +139,18 @@ class TTSAudioGenerator {
     timeout?: number
   ): Promise<string> {
     try {
-      // Microsoft Speech service already handles file generation
-      // We need to wrap it in a Promise to get the file URI
-      return new Promise((resolve, reject) => {
-        let resolved = false;
-        let tempFilePath: string;
-
-        const timeoutId = timeout ? setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            reject(new Error('Microsoft Speech synthesis timeout'));
-          }
-        }, timeout) : null;
-
-        microsoftSpeechService.speak(text, {
-          voice: settings.voice,
-          pitch: settings.pitch,
-          rate: settings.rate,
-          onStart: () => {
-            // Audio generation started
-          },
-          onDone: () => {
-            if (!resolved && tempFilePath) {
-              resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              resolve(tempFilePath);
-            }
-          },
-          onError: (error) => {
-            if (!resolved) {
-              resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              reject(new Error(`Microsoft Speech error: ${error}`));
-            }
-          },
-        }).then((filePath) => {
-          // MicrosoftSpeechService.speak returns the temp file path
-          // We need to modify MicrosoftSpeechService to expose this
-          // For now, we'll rely on onDone callback
-          tempFilePath = filePath || '';
-        }).catch((error) => {
-          if (!resolved) {
-            resolved = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            reject(error);
-          }
-        });
+      const promise = microsoftSpeechService.generateAudio(text, {
+        voice: settings.voice,
+        pitch: settings.pitch,
+        rate: settings.rate,
       });
+
+      // Apply timeout if specified
+      const uri = timeout 
+        ? await this.withTimeout(promise, timeout, 'Microsoft Speech synthesis timeout')
+        : await promise;
+
+      return uri;
     } catch (error) {
       throw new Error(`Microsoft Speech generation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -202,7 +167,7 @@ class TTSAudioGenerator {
         return voices.length > 0;
       } else {
         // Test Microsoft Speech by validating configuration
-        return microsoftSpeechService.isInitialized();
+        return microsoftSpeechService.isReady();
       }
     } catch {
       return false;
