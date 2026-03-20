@@ -2,7 +2,12 @@
 
 **Last Updated:** March 20, 2026  
 **Version:** React Native 0.81.6 with Expo 54  
-**TTS Engines:** Expo Speech (device TTS) + Microsoft Azure Speech (cloud TTS)
+**TTS Engines:** Expo Speech (device TTS) + Microsoft Azure Speech (cloud TTS)  
+**Status:** **MIGRATION IN PROGRESS** - See [Migration Plan](./tts-migration/00-MIGRATION-OVERVIEW.md)
+
+---
+
+> **⚠️ IMPORTANT:** This document describes the **current TTS implementation**. A major refactoring to a foreground service architecture with progressive preloading and offline downloads is planned. See the [TTS Migration Documentation](./tts-migration/00-MIGRATION-OVERVIEW.md) for details on the new architecture.
 
 ---
 
@@ -20,6 +25,7 @@
 10. [Event Flow & Communication](#event-flow--communication)
 11. [Limitations & Known Issues](#limitations--known-issues)
 12. [Future Enhancement Opportunities](#future-enhancement-opportunities)
+13. **[Migration to New Architecture](./tts-migration/00-MIGRATION-OVERVIEW.md)** ✨
 
 ---
 
@@ -2501,8 +2507,75 @@ const loadCredentials = async (): Promise<{ key: string; region: string } | null
 
 ---
 
+## Migration to New Architecture
+
+> **🚀 The TTS system is being migrated to a new architecture that addresses the limitations above.**
+
+### What's Changing?
+
+The current TTS system is being refactored from a WebView-coordinated, on-demand synthesis model to a **hybrid foreground service architecture** with progressive preloading and offline batch downloads.
+
+**Key Improvements:**
+- ✅ **True pause/resume** - Mid-sentence pause via expo-av (no more stop/restart)
+- ✅ **Background reliability** - Android foreground service prevents process termination
+- ✅ **Network resilience** - Progressive preloading with retry logic and intelligent caching
+- ✅ **Offline capability** - Batch download chapters for airplane mode, travel
+- ✅ **66% cost reduction** - Azure Batch Synthesis API ($4/1M vs $15/1M chars)
+- ✅ **Better UX** - Faster startup, smoother playback, no gaps between elements
+
+### Migration Documentation
+
+**Comprehensive migration plan available:**
+
+1. **[00-MIGRATION-OVERVIEW.md](./tts-migration/00-MIGRATION-OVERVIEW.md)**
+   - High-level strategy and timeline
+   - Current vs new architecture comparison
+   - Success criteria and risk mitigation
+
+2. **[01-NEW-ARCHITECTURE.md](./tts-migration/01-NEW-ARCHITECTURE.md)**
+   - Detailed component design
+   - Data flow diagrams
+   - State management strategy
+
+3. **[02-IMPLEMENTATION-GUIDE.md](./tts-migration/02-IMPLEMENTATION-GUIDE.md)**
+   - Step-by-step implementation instructions
+   - Complete code examples
+   - Testing procedures
+
+4. **[03-AZURE-BATCH-SYNTHESIS.md](./tts-migration/03-AZURE-BATCH-SYNTHESIS.md)**
+   - Batch Synthesis API integration
+   - Azure Blob Storage setup (optional)
+   - Cost analysis and alternatives
+
+5. **[03-BLOB-STORAGE-SETUP.md](./tts-migration/03-BLOB-STORAGE-SETUP.md)**
+   - Quick reference for Azure Blob Storage setup
+   - Alternative storage solutions
+   - Troubleshooting guide
+
+### Timeline
+
+- **Phase 1 (Week 1):** Core service + progressive preloading
+- **Phase 2 (Week 2):** Batch downloads + offline support
+- **Phase 3 (Days 13-14):** Testing and polish
+
+**Estimated effort:** 80-100 hours (2 weeks full-time or 4 weeks part-time)
+
+### For Developers
+
+If you're implementing TTS features or fixing bugs:
+1. Read the [migration plan](./tts-migration/00-MIGRATION-OVERVIEW.md) first
+2. Consider whether your change should wait for the migration
+3. Ensure compatibility with both architectures if implementing now
+
+### For AI Agents
+
+The migration documentation is designed to be comprehensive enough for an AI agent to implement the refactoring from scratch. Start with [00-MIGRATION-OVERVIEW.md](./tts-migration/00-MIGRATION-OVERVIEW.md) and follow the documentation sequentially.
+
+---
+
 **End of Documentation**
 
 For questions or contributions, see:
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CONTRIBUTING.md](../CONTRIBUTING.md)
 - [Architecture Decisions](https://github.com/LNReader/lnreader/discussions)
+- **[TTS Migration Plan](./tts-migration/00-MIGRATION-OVERVIEW.md)** ✨
