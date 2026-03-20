@@ -80,11 +80,13 @@ class TTSPlaybackManager extends EventEmitter {
    */
   private setupPreloaderListeners(): void {
     this.preloader.on('ready', (event) => {
+      console.log('[TTSPlaybackManager] Received ready event:', event);
       if (event.type === 'ready') {
         this.emit('audioReady', { type: 'audioReady', index: event.index, uri: event.uri });
         
         // Auto-start playback if we're loading first element
         if (this.state === 'loading' && event.index === this.currentIndex) {
+          console.log('[TTSPlaybackManager] Auto-starting playback for first element');
           this.playCurrentElement();
         }
       }
@@ -310,21 +312,30 @@ class TTSPlaybackManager extends EventEmitter {
    * Play current element (internal method)
    */
   private async playCurrentElement(): Promise<void> {
+    console.log('[TTSPlaybackManager] playCurrentElement() called, currentIndex:', this.currentIndex);
     try {
       const item = this.queue[this.currentIndex];
       if (!item) {
+        console.warn('[TTSPlaybackManager] No item at current index');
         return;
       }
 
       // Check if audio is ready
-      if (!this.preloader.isAudioReady(this.currentIndex)) {
+      const isReady = this.preloader.isAudioReady(this.currentIndex);
+      console.log('[TTSPlaybackManager] Audio ready?', isReady);
+      
+      if (!isReady) {
         this.emit('audioLoading', { type: 'audioLoading', index: this.currentIndex });
+        console.log('[TTSPlaybackManager] Audio not ready, waiting...');
         // Audio will auto-play when preloader emits 'ready' event
         return;
       }
 
       const uri = this.preloader.getAudioUri(this.currentIndex);
+      console.log('[TTSPlaybackManager] Got URI:', uri);
+      
       if (!uri) {
+        console.warn('[TTSPlaybackManager] No URI, skipping to next');
         await this.next();
         return;
       }
@@ -335,6 +346,7 @@ class TTSPlaybackManager extends EventEmitter {
         this.currentSound = null;
       }
 
+      console.log('[TTSPlaybackManager] Creating sound from URI...');
       // Load and play new sound
       const { sound } = await Audio.Sound.createAsync(
         { uri },
@@ -342,6 +354,7 @@ class TTSPlaybackManager extends EventEmitter {
         this.onPlaybackStatusUpdate.bind(this)
       );
 
+      console.log('[TTSPlaybackManager] Sound created and playing!');
       this.currentSound = sound;
       this.setState('playing');
 
@@ -364,7 +377,8 @@ class TTSPlaybackManager extends EventEmitter {
       // Ensure buffer ahead during playback
       await this.preloader.ensureBufferAhead(this.currentIndex);
 
-    } catch {
+    } catch (error) {
+      console.error('[TTSPlaybackManager] Error in playCurrentElement():', error);
       this.emitError('Failed to play element', 'PLAY_ELEMENT_ERROR');
       // Try to skip to next
       await this.next();
