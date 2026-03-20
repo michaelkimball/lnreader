@@ -13,6 +13,7 @@ export class EventEmitter {
       this.events.set(event, []);
     }
     this.events.get(event)!.push(listener);
+    console.log(`[EventEmitter] Added listener for '${event}', total:`, this.events.get(event)!.length);
   }
 
   off(event: string, listener: Listener): void {
@@ -27,6 +28,7 @@ export class EventEmitter {
 
   emit(event: string, ...args: unknown[]): void {
     const listeners = this.events.get(event);
+    console.log(`[EventEmitter] Emitting '${event}', listeners:`, listeners?.length || 0);
     if (listeners) {
       listeners.forEach(listener => listener(...args));
     }

@@ -188,7 +188,9 @@ class TTSAudioPreloader extends EventEmitter {
     const firstReady = this.queue.find(item => item.status === 'ready');
     if (firstReady) {
       console.log('[TTSAudioPreloader] First element ready at index', firstReady.index, 'URI:', firstReady.uri);
+      console.log('[TTSAudioPreloader] Emitting ready event now...');
       this.emit('ready', { type: 'ready', index: firstReady.index, uri: firstReady.uri! });
+      console.log('[TTSAudioPreloader] Ready event emitted');
     } else {
       console.warn('[TTSAudioPreloader] No ready items after priority generation');
     }
