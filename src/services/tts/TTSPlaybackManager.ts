@@ -70,9 +70,8 @@ class TTSPlaybackManager extends EventEmitter {
         playThroughEarpieceAndroid: false,
       });
       this.isInitialized = true;
-      console.log('[TTSPlayback] Audio initialized');
-    } catch (error) {
-      console.error('[TTSPlayback] Audio initialization error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -93,14 +92,12 @@ class TTSPlaybackManager extends EventEmitter {
 
     this.preloader.on('progress', (event) => {
       if (event.type === 'progress') {
-        console.log(`[TTSPlayback] Preload progress: ${event.progress.percentage}%`);
+        // Progress update
       }
     });
 
     this.preloader.on('error', (event) => {
       if (event.type === 'error') {
-        console.error(`[TTSPlayback] Preload error at index ${event.index}:`, event.error);
-        
         // If it's the current element and won't retry, skip to next
         if (event.index === this.currentIndex && !event.willRetry) {
           this.next();
@@ -120,8 +117,6 @@ class TTSPlaybackManager extends EventEmitter {
     settings: VoiceSettings
   ): Promise<void> {
     try {
-      console.log(`[TTSPlayback] Starting playback from index ${startIndex}`);
-      
       // Stop any existing playback
       await this.stop();
 
@@ -155,8 +150,7 @@ class TTSPlaybackManager extends EventEmitter {
 
       // Wait for first element to be ready, then play
       // The preloader will emit 'ready' event which triggers playback
-    } catch (error) {
-      console.error('[TTSPlayback] Play error:', error);
+    } catch {
       this.emitError('Failed to start playback', 'PLAY_ERROR');
       this.setState('idle');
     }
@@ -180,9 +174,7 @@ class TTSPlaybackManager extends EventEmitter {
         false
       );
 
-      console.log('[TTSPlayback] Paused');
-    } catch (error) {
-      console.error('[TTSPlayback] Pause error:', error);
+    } catch {
       this.emitError('Failed to pause', 'PAUSE_ERROR');
     }
   }
@@ -205,9 +197,7 @@ class TTSPlaybackManager extends EventEmitter {
         true
       );
 
-      console.log('[TTSPlayback] Resumed');
-    } catch (error) {
-      console.error('[TTSPlayback] Resume error:', error);
+    } catch {
       this.emitError('Failed to resume', 'RESUME_ERROR');
     }
   }
@@ -217,8 +207,6 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async stop(): Promise<void> {
     try {
-      console.log('[TTSPlayback] Stopping playback');
-
       // Stop current sound
       if (this.currentSound) {
         await this.currentSound.unloadAsync();
@@ -240,8 +228,8 @@ class TTSPlaybackManager extends EventEmitter {
 
       // Return to idle
       setTimeout(() => this.setState('idle'), 100);
-    } catch (error) {
-      console.error('[TTSPlayback] Stop error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -251,11 +239,8 @@ class TTSPlaybackManager extends EventEmitter {
   async seek(index: number): Promise<void> {
     try {
       if (index < 0 || index >= this.queue.length) {
-        console.warn(`[TTSPlayback] Invalid seek index: ${index}`);
         return;
       }
-
-      console.log(`[TTSPlayback] Seeking to index ${index}`);
 
       // Unload current sound
       if (this.currentSound) {
@@ -275,8 +260,7 @@ class TTSPlaybackManager extends EventEmitter {
       }
 
       this.emitProgress();
-    } catch (error) {
-      console.error('[TTSPlayback] Seek error:', error);
+    } catch {
       this.emitError('Failed to seek', 'SEEK_ERROR');
     }
   }
@@ -300,7 +284,6 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async previous(): Promise<void> {
     if (this.currentIndex <= 0) {
-      console.warn('[TTSPlayback] Already at first element');
       return;
     }
 
@@ -325,13 +308,11 @@ class TTSPlaybackManager extends EventEmitter {
     try {
       const item = this.queue[this.currentIndex];
       if (!item) {
-        console.error('[TTSPlayback] No item at current index');
         return;
       }
 
       // Check if audio is ready
       if (!this.preloader.isAudioReady(this.currentIndex)) {
-        console.log(`[TTSPlayback] Waiting for audio at index ${this.currentIndex}`);
         this.emit('audioLoading', { type: 'audioLoading', index: this.currentIndex });
         // Audio will auto-play when preloader emits 'ready' event
         return;
@@ -339,7 +320,6 @@ class TTSPlaybackManager extends EventEmitter {
 
       const uri = this.preloader.getAudioUri(this.currentIndex);
       if (!uri) {
-        console.error('[TTSPlayback] No URI for current element');
         await this.next();
         return;
       }
@@ -379,9 +359,7 @@ class TTSPlaybackManager extends EventEmitter {
       // Ensure buffer ahead during playback
       await this.preloader.ensureBufferAhead(this.currentIndex);
 
-      console.log(`[TTSPlayback] Playing index ${this.currentIndex}`);
-    } catch (error) {
-      console.error('[TTSPlayback] Play element error:', error);
+    } catch {
       this.emitError('Failed to play element', 'PLAY_ELEMENT_ERROR');
       // Try to skip to next
       await this.next();
@@ -395,7 +373,6 @@ class TTSPlaybackManager extends EventEmitter {
     if (!status.isLoaded) return;
 
     if (status.didJustFinish) {
-      console.log(`[TTSPlayback] Element ${this.currentIndex} finished`);
       // Auto-advance to next
       this.next();
     }
@@ -455,7 +432,6 @@ class TTSPlaybackManager extends EventEmitter {
         state: newState,
         index: this.currentIndex,
       });
-      console.log(`[TTSPlayback] State: ${newState}`);
     }
   }
 

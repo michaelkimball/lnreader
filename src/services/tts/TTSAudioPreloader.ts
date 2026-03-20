@@ -9,7 +9,7 @@
  */
 
 import { EventEmitter } from 'events';
-import TTSAudioGenerator, { VoiceSettings, GenerateOptions, GenerationResult } from './TTSAudioGenerator';
+import TTSAudioGenerator, { VoiceSettings, GenerationResult } from './TTSAudioGenerator';
 
 export interface TTSQueueItem {
   index: number;
@@ -37,13 +37,6 @@ export interface PreloadProgress {
   generated: number;
   failed: number;
 }
-
-type PreloadEvent =
-  | { type: 'ready'; index: number; uri: string }
-  | { type: 'progress'; progress: PreloadProgress }
-  | { type: 'complete'; stats: PreloadProgress }
-  | { type: 'error'; index: number; error: string; willRetry: boolean }
-  | { type: 'retrying'; index: number; attempt: number; maxAttempts: number };
 
 class TTSAudioPreloader extends EventEmitter {
   private queue: TTSQueueItem[] = [];
@@ -90,9 +83,7 @@ class TTSAudioPreloader extends EventEmitter {
     this.isCancelled = false;
     this.resetStats();
 
-    console.log(`[TTSPreloader] Starting preload of ${textElements.length} elements`);
-
-    try {
+    try{
       // Phase 1: Priority elements (first N)
       await this.preloadPriority();
 
@@ -105,7 +96,6 @@ class TTSAudioPreloader extends EventEmitter {
         this.emit('complete', { type: 'complete', stats: this.getProgress() });
       }
     } catch (error) {
-      console.error('[TTSPreloader] Preload error:', error);
       throw error;
     } finally {
       this.isPreloading = false;
@@ -124,7 +114,6 @@ class TTSAudioPreloader extends EventEmitter {
     );
 
     if (pendingItems.length > 0) {
-      console.log(`[TTSPreloader] Buffering ${pendingItems.length} elements ahead of index ${currentIndex}`);
       await this.generateBatch(pendingItems, 2);  // Higher priority, low concurrency
     }
   }
@@ -167,7 +156,6 @@ class TTSAudioPreloader extends EventEmitter {
    * Cancel ongoing preloading
    */
   async cancelPreloading(): Promise<void> {
-    console.log('[TTSPreloader] Cancelling preload');
     this.isCancelled = true;
     this.isPreloading = false;
   }
@@ -188,7 +176,6 @@ class TTSAudioPreloader extends EventEmitter {
    */
   private async preloadPriority(): Promise<void> {
     const priorityItems = this.queue.slice(0, this.options.priorityCount);
-    console.log(`[TTSPreloader] Loading priority elements (${priorityItems.length})`);
     
     await this.generateBatch(priorityItems, 2);  // Low concurrency for priority
     
@@ -206,7 +193,6 @@ class TTSAudioPreloader extends EventEmitter {
     const remainingItems = this.queue.filter(item => item.status === 'pending');
     if (remainingItems.length === 0) return;
 
-    console.log(`[TTSPreloader] Loading remaining elements (${remainingItems.length})`);
     await this.generateBatch(remainingItems, 10);  // Higher concurrency for background
   }
 
@@ -263,7 +249,6 @@ class TTSAudioPreloader extends EventEmitter {
           this.stats.generated++;
         }
 
-        console.log(`[TTSPreloader] Generated index ${item.index} (${result.cached ? 'cached' : 'generated'})`);
         return;  // Success, exit retry loop
       } catch (error) {
         attempt++;
@@ -287,7 +272,6 @@ class TTSAudioPreloader extends EventEmitter {
             maxAttempts: this.options.maxRetries,
           });
           
-          console.log(`[TTSPreloader] Retrying index ${item.index} in ${delay}ms (attempt ${attempt}/${this.options.maxRetries})`);
           await this.sleep(delay);
         } else {
           // Max retries exceeded
@@ -295,7 +279,6 @@ class TTSAudioPreloader extends EventEmitter {
           item.error = error instanceof Error ? error.message : String(error);
           this.stats.failed++;
           this.stats.completed++;
-          console.error(`[TTSPreloader] Failed index ${item.index} after ${this.options.maxRetries} retries`);
           break;
         }
       }

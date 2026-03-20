@@ -74,9 +74,8 @@ class TTSCacheManager {
       // Calculate current cache size
       await this.calculateCacheSize();
       
-      console.log(`[TTSCache] Initialized with ${this.metadata.size} items, ${this.formatBytes(this.currentCacheSize)}`);
-    } catch (error) {
-      console.error('[TTSCache] Initialization error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -92,7 +91,9 @@ class TTSCacheManager {
     const combined = normalized + voiceKey;
     for (let i = 0; i < combined.length; i++) {
       const char = combined.charCodeAt(i);
+      // eslint-disable-next-line no-bitwise
       hash = ((hash << 5) - hash) + char;
+      // eslint-disable-next-line no-bitwise
       hash = hash & hash; // Convert to 32bit integer
     }
     
@@ -113,7 +114,6 @@ class TTSCacheManager {
       // Check if file still exists
       const fileInfo = await FileSystem.getInfoAsync(meta.uri);
       if (!fileInfo.exists) {
-        console.warn(`[TTSCache] Cached file missing for key ${key}, removing from metadata`);
         this.metadata.delete(key);
         await this.saveMetadata();
         this.misses++;
@@ -127,10 +127,8 @@ class TTSCacheManager {
       await this.saveMetadata();
 
       this.hits++;
-      console.log(`[TTSCache] Hit for key ${key} (${meta.text.substring(0, 50)}...)`);
       return meta.uri;
-    } catch (error) {
-      console.error('[TTSCache] Get error:', error);
+    } catch {
       this.misses++;
       return null;
     }
@@ -181,9 +179,8 @@ class TTSCacheManager {
       this.currentCacheSize += size;
       await this.saveMetadata();
 
-      console.log(`[TTSCache] Cached ${key} (${this.formatBytes(size)}), total: ${this.formatBytes(this.currentCacheSize)}`);
-    } catch (error) {
-      console.error('[TTSCache] Set error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -211,9 +208,8 @@ class TTSCacheManager {
       this.metadata.delete(key);
       await this.saveMetadata();
 
-      console.log(`[TTSCache] Deleted ${key}`);
-    } catch (error) {
-      console.error('[TTSCache] Delete error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -233,9 +229,8 @@ class TTSCacheManager {
       this.misses = 0;
       await this.saveMetadata();
 
-      console.log('[TTSCache] Cache cleared');
-    } catch (error) {
-      console.error('[TTSCache] Clear error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -275,7 +270,6 @@ class TTSCacheManager {
       await this.delete(key);
     }
 
-    console.log(`[TTSCache] Pruned ${toRemove.length} items, freed ${this.formatBytes(freedSpace)}`);
     return toRemove.length;
   }
 
@@ -334,8 +328,7 @@ class TTSCacheManager {
         this.hits = data.hits || 0;
         this.misses = data.misses || 0;
       }
-    } catch (error) {
-      console.error('[TTSCache] Load metadata error:', error);
+    } catch {
       this.metadata = new Map();
     }
   }
@@ -355,8 +348,8 @@ class TTSCacheManager {
         this.metadataFile,
         JSON.stringify(data, null, 2)
       );
-    } catch (error) {
-      console.error('[TTSCache] Save metadata error:', error);
+    } catch {
+      // Error handling
     }
   }
 
@@ -370,8 +363,7 @@ class TTSCacheManager {
         total += meta.size;
       }
       this.currentCacheSize = total;
-    } catch (error) {
-      console.error('[TTSCache] Calculate size error:', error);
+    } catch {
       this.currentCacheSize = 0;
     }
   }

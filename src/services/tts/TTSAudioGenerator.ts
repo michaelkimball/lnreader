@@ -73,11 +73,8 @@ class TTSAudioGenerator {
           uri = await this.generateWithExpo(text, settings, options.timeout);
         }
       } catch (error) {
-        console.error(`[TTSAudioGen] ${settings.engine} generation failed:`, error);
-        
         // Fallback to Expo if Microsoft fails and fallback is enabled
         if (settings.engine === 'microsoft' && options.fallbackToExpo !== false) {
-          console.log('[TTSAudioGen] Falling back to Expo Speech');
           uri = await this.generateWithExpo(text, {
             ...settings,
             engine: 'expo',
@@ -99,7 +96,6 @@ class TTSAudioGenerator {
         duration: Date.now() - startTime,
       };
     } catch (error) {
-      console.error('[TTSAudioGen] Generate audio error:', error);
       throw error;
     }
   }
@@ -128,10 +124,8 @@ class TTSAudioGenerator {
         ? await this.withTimeout(promise, timeout, 'Expo Speech synthesis timeout')
         : await promise;
 
-      console.log(`[TTSAudioGen] Expo generated: ${uri}`);
       return uri;
     } catch (error) {
-      console.error('[TTSAudioGen] Expo generation error:', error);
       throw new Error(`Expo Speech generation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -169,7 +163,6 @@ class TTSAudioGenerator {
             if (!resolved && tempFilePath) {
               resolved = true;
               if (timeoutId) clearTimeout(timeoutId);
-              console.log(`[TTSAudioGen] Microsoft generated: ${tempFilePath}`);
               resolve(tempFilePath);
             }
           },
@@ -194,7 +187,6 @@ class TTSAudioGenerator {
         });
       });
     } catch (error) {
-      console.error('[TTSAudioGen] Microsoft generation error:', error);
       throw new Error(`Microsoft Speech generation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -212,8 +204,7 @@ class TTSAudioGenerator {
         // Test Microsoft Speech by validating configuration
         return microsoftSpeechService.isInitialized();
       }
-    } catch (error) {
-      console.error(`[TTSAudioGen] ${engine} test failed:`, error);
+    } catch {
       return false;
     }
   }
