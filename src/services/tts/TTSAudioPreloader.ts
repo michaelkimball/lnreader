@@ -8,7 +8,7 @@
  * 4. Retry failed generations with exponential backoff
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from './EventEmitter';
 import TTSAudioGenerator, { VoiceSettings, GenerationResult } from './TTSAudioGenerator';
 
 export interface TTSQueueItem {

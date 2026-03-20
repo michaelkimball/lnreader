@@ -9,7 +9,7 @@
  * - Handles playback controls (play, pause, resume, stop, seek, next, prev)
  */
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from './EventEmitter';
 import { Audio, AVPlaybackStatus } from 'expo-av';
 import TTSAudioPreloader, { TTSQueueItem } from './TTSAudioPreloader';
 import { VoiceSettings } from './TTSAudioGenerator';
