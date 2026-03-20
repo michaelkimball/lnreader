@@ -127,16 +127,21 @@ class TTSPlaybackManager extends EventEmitter {
   ): Promise<void> {
     console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements');
     try {
-      // Clear any pending idle timer from previous stop()
-      if (this.idleTimer) {
-        clearTimeout(this.idleTimer);
-        this.idleTimer = null;
-      }
-
       // Stop any existing playback
       await this.stop();
 
+      // Clear any pending idle timer from stop() - must do this AFTER stop()
+      console.log('[TTSPlaybackManager] Checking for idle timer after stop()...');
+      if (this.idleTimer) {
+        console.log('[TTSPlaybackManager] Clearing idle timer!');
+        clearTimeout(this.idleTimer);
+        this.idleTimer = null;
+      } else {
+        console.log('[TTSPlaybackManager] No idle timer to clear');
+      }
+
       // Set state
+      console.log('[TTSPlaybackManager] Setting state to loading, index to', startIndex);
       this.setState('loading');
       this.currentIndex = startIndex;
       this.chapterId = chapterId;
@@ -247,7 +252,11 @@ class TTSPlaybackManager extends EventEmitter {
       this.emit('queueEnd', { type: 'queueEnd', reason: 'stopped' });
 
       // Return to idle after a short delay
-      this.idleTimer = setTimeout(() => this.setState('idle'), 100);
+      console.log('[TTSPlaybackManager] stop() setting idle timer...');
+      this.idleTimer = setTimeout(() => {
+        console.log('[TTSPlaybackManager] Idle timer fired! Setting state to idle');
+        this.setState('idle');
+      }, 100);
     } catch {
       // Error handling
     }
