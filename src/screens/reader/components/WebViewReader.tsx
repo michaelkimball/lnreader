@@ -134,6 +134,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       `);
     });
     const stopListener = ttsMediaEmitter.addListener('TTSStop', () => {
+      console.log('[WebViewReader] TTSStop media button pressed');
       ttsPlaybackManager.stop();
       webViewRef.current?.injectJavaScript(`
         if (window.tts) { tts.stop(); }
@@ -195,6 +196,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
   useEffect(() => {
     return () => {
+      console.log('[WebViewReader] Component unmounting, stopping TTS');
       dismissTTSNotification();
       // Stop playback on unmount
       ttsPlaybackManager.stop();
@@ -310,16 +312,24 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
     const handleElementChange = (event: PlaybackEvent) => {
       if (event.type === 'elementChange' && event.index !== undefined) {
-        // Update WebView to trigger next element
-        webViewRef.current?.injectJavaScript('tts.next?.()');
+        // 'elementChange' is emitted when NEW audio starts playing
+        // WebView already advanced via handleQueueEnd ('queueEnd' → inject tts.next())
+        // This event is just for UI updates - do NOT inject tts.next() here!
+        // Could update UI here if needed (e.g., progress indicators)
       }
     };
 
     const handleQueueEnd = (event: PlaybackEvent) => {
       if (event.type === 'queueEnd') {
-        isTTSReadingRef.current = false;
-        dismissTTSNotification();
-        webViewRef.current?.injectJavaScript('tts.stop?.()');
+        if (event.reason === 'completed') {
+          // Call tts.next() to advance to next element in WebView queue
+          webViewRef.current?.injectJavaScript('tts.next?.()');
+        } else {
+          // User stopped or error - end TTS session
+          isTTSReadingRef.current = false;
+          dismissTTSNotification();
+          webViewRef.current?.injectJavaScript('tts.stop?.()');
+        }
       }
     };
 
@@ -481,6 +491,21 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
               if (typeof event.index === 'number') {
                 ttsQueueIndexRef.current = event.index;
               }
+              
+              // If this is the first speak event and WebView queue isn't initialized,
+              // call tts.start() to build the queue
+              if (!isTTSReadingRef.current && (!event.total || event.total === 0)) {
+                webViewRef.current?.injectJavaScript(`
+                  (function() {
+                    if (window.tts && !tts.started) {
+                      tts.start();
+                    }
+                  })();
+                `);
+                // Don't process this speak event - let tts.start() handle sending the first one
+                return;
+              }
+              
               if (!isTTSReadingRef.current) {
                 isTTSReadingRef.current = true;
                 showTTSNotification({
@@ -510,10 +535,13 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             }
             break;
           case 'pause-speak':
-            stopTTS();
+            // WebView already paused itself, just clean up React Native side
+            ttsPlaybackManager.stop(true); // fromPlay=true to skip queueEnd emission
             break;
           case 'stop-speak':
-            stopTTS();
+            // WebView already stopped itself, just clean up React Native side
+            // DO NOT call stopTTS() as it will inject tts.stop() back to WebView
+            ttsPlaybackManager.stop(true); // fromPlay=true to skip queueEnd emission
             if (!autoStartTTSRef.current) {
               isTTSReadingRef.current = false;
               ttsQueueRef.current = [];

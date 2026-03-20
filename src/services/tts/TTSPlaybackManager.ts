@@ -43,6 +43,7 @@ class TTSPlaybackManager extends EventEmitter {
   private preloader: TTSAudioPreloader;
   private isInitialized: boolean = false;
   private idleTimer: NodeJS.Timeout | null = null;
+  private isStopping: boolean = false;
 
   private constructor() {
     super();
@@ -125,10 +126,18 @@ class TTSPlaybackManager extends EventEmitter {
     novelId: number,
     settings: VoiceSettings
   ): Promise<void> {
-    console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements');
+    console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements, current state:', this.state);
+    
+    // Prevent re-entrant calls when already loading or playing
+    // This stops the WebView from interrupting playback with rapid 'speak' events
+    if (this.state === 'loading' || this.state === 'playing') {
+      console.log('[TTSPlaybackManager] Already in state:', this.state, '- ignoring play() call');
+      return;
+    }
+    
     try {
-      // Stop any existing playback
-      await this.stop();
+      // Stop any existing playback (pass true to skip idle timer)
+      await this.stop(true);
 
       // Clear any pending idle timer from stop() - must do this AFTER stop()
       console.log('[TTSPlaybackManager] Checking for idle timer after stop()...');
@@ -230,8 +239,23 @@ class TTSPlaybackManager extends EventEmitter {
   /**
    * Stop playback and cleanup
    */
-  async stop(): Promise<void> {
+  async stop(fromPlay: boolean = false): Promise<void> {
+    // Prevent recursive calls - ALWAYS block if already stopping
+    if (this.isStopping) {
+      console.log('[TTSPlaybackManager] stop() already in progress, skipping');
+      return;
+    }
+    
+    this.isStopping = true;
+    console.log('[TTSPlaybackManager] stop() starting...', fromPlay ? '(from play())' : '');
+    
     try {
+      // Clear any existing idle timer first
+      if (this.idleTimer) {
+        clearTimeout(this.idleTimer);
+        this.idleTimer = null;
+      }
+      
       // Stop current sound
       if (this.currentSound) {
         await this.currentSound.unloadAsync();
@@ -249,16 +273,30 @@ class TTSPlaybackManager extends EventEmitter {
       this.currentIndex = -1;
       this.queue = [];
       
-      this.emit('queueEnd', { type: 'queueEnd', reason: 'stopped' });
+      // Only emit queueEnd if this is a real stop (not from play())
+      // Otherwise it triggers WebView tts.stop() which resets the WebView's queue
+      if (!fromPlay) {
+        console.log('[TTSPlaybackManager] Emitting queueEnd with reason=stopped (fromPlay=false)');
+        this.emit('queueEnd', { type: 'queueEnd', reason: 'stopped' });
+      } else {
+        console.log('[TTSPlaybackManager] Skipping queueEnd emission (fromPlay=true)');
+      }
 
-      // Return to idle after a short delay
-      console.log('[TTSPlaybackManager] stop() setting idle timer...');
-      this.idleTimer = setTimeout(() => {
-        console.log('[TTSPlaybackManager] Idle timer fired! Setting state to idle');
-        this.setState('idle');
-      }, 100);
-    } catch {
-      // Error handling
+      // Only set idle timer if this is a real stop, not called from play()
+      if (!fromPlay) {
+        console.log('[TTSPlaybackManager] stop() setting idle timer...');
+        this.idleTimer = setTimeout(() => {
+          console.log('[TTSPlaybackManager] Idle timer fired! Setting state to idle');
+          this.setState('idle');
+          this.isStopping = false;
+        }, 100);
+      } else {
+        console.log('[TTSPlaybackManager] Skipping idle timer (called from play())');
+        this.isStopping = false;
+      }
+    } catch (error) {
+      console.error('[TTSPlaybackManager] Error in stop():', error);
+      this.isStopping = false;
     }
   }
 
@@ -299,9 +337,16 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async next(): Promise<void> {
     if (this.currentIndex >= this.queue.length - 1) {
-      // End of queue
+      // End of current single-element queue
+      // Clean up and reset state without calling stop() to avoid blocking next play()
+      if (this.currentSound) {
+        await this.currentSound.unloadAsync();
+        this.currentSound = null;
+      }
+      this.setState('stopped');
+      this.currentIndex = -1;
+      this.queue = [];
       this.emit('queueEnd', { type: 'queueEnd', reason: 'completed' });
-      await this.stop();
       return;
     }
 
@@ -411,9 +456,20 @@ class TTSPlaybackManager extends EventEmitter {
    * Handle playback status updates from expo-av
    */
   private onPlaybackStatusUpdate(status: AVPlaybackStatus): void {
-    if (!status.isLoaded) return;
+    if (!status.isLoaded) {
+      console.log('[TTSPlaybackManager] Status update: not loaded');
+      return;
+    }
+
+    console.log('[TTSPlaybackManager] Status update:', {
+      isPlaying: status.isPlaying,
+      positionMillis: status.positionMillis,
+      durationMillis: status.durationMillis,
+      didJustFinish: status.didJustFinish,
+    });
 
     if (status.didJustFinish) {
+      console.log('[TTSPlaybackManager] Audio finished, advancing to next');
       // Auto-advance to next
       this.next();
     }
