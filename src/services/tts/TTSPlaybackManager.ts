@@ -126,7 +126,7 @@ class TTSPlaybackManager extends EventEmitter {
     novelId: number,
     settings: VoiceSettings
   ): Promise<void> {
-    console.log('[TTSPlaybackManager] play() called with', textElements.length, 'elements, current state:', this.state);
+    console.log('🔥🔥🔥 [TTSPlaybackManager] HOT RELOAD TEST - play() called with', textElements.length, 'elements, current state:', this.state);
     
     // Prevent re-entrant calls when already loading or playing
     // This stops the WebView from interrupting playback with rapid 'speak' events
@@ -195,10 +195,15 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async pause(): Promise<void> {
     try {
-      if (this.state !== 'playing') return;
+      console.log('[TTSPlaybackManager] pause() called - currentState:', this.state);
+      if (this.state !== 'playing') {
+        console.log('[TTSPlaybackManager] pause() skipped - not in playing state');
+        return;
+      }
 
       await this.currentSound?.pauseAsync();
       this.setState('paused');
+      console.log('[TTSPlaybackManager] pause() successful');
       
       // Update foreground service
       NativeTTSForegroundService.startService(
@@ -218,10 +223,15 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async resume(): Promise<void> {
     try {
-      if (this.state !== 'paused') return;
+      console.log('[TTSPlaybackManager] resume() called - currentState:', this.state);
+      if (this.state !== 'paused') {
+        console.log('[TTSPlaybackManager] resume() skipped - not in paused state');
+        return;
+      }
 
       await this.currentSound?.playAsync();
       this.setState('playing');
+      console.log('[TTSPlaybackManager] resume() successful');
       
       // Update foreground service
       NativeTTSForegroundService.startService(
@@ -304,8 +314,10 @@ class TTSPlaybackManager extends EventEmitter {
    * Seek to specific element index
    */
   async seek(index: number): Promise<void> {
+    console.log('🎯 [TTSPlaybackManager] seek() called with index:', index, 'queue.length:', this.queue.length, 'currentState:', this.state);
     try {
       if (index < 0 || index >= this.queue.length) {
+        console.log('[TTSPlaybackManager] seek() index out of bounds, returning');
         return;
       }
 
@@ -317,17 +329,24 @@ class TTSPlaybackManager extends EventEmitter {
 
       // Update index
       this.currentIndex = index;
+      console.log('[TTSPlaybackManager] seek() - index updated to', index);
       
       // Ensure buffer ahead
       await this.preloader.ensureBufferAhead(index);
+      console.log('[TTSPlaybackManager] seek() - buffer ensured');
 
       // Play new element
       if (this.state === 'playing' || this.state === 'paused') {
+        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- calling playCurrentElement()');
         await this.playCurrentElement();
+      } else {
+        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- NOT calling playCurrentElement()');
       }
 
       this.emitProgress();
-    } catch {
+      console.log('[TTSPlaybackManager] seek() completed');
+    } catch (error) {
+      console.error('[TTSPlaybackManager] seek() error:', error);
       this.emitError('Failed to seek', 'SEEK_ERROR');
     }
   }
@@ -337,15 +356,14 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async next(): Promise<void> {
     if (this.currentIndex >= this.queue.length - 1) {
-      // End of current single-element queue
-      // Clean up and reset state without calling stop() to avoid blocking next play()
+      // End of current queue - but don't clear it (needed for seek in background mode)
+      // Clean up sound
       if (this.currentSound) {
         await this.currentSound.unloadAsync();
         this.currentSound = null;
       }
       this.setState('stopped');
-      this.currentIndex = -1;
-      this.queue = [];
+      // Don't clear queue or reset currentIndex - keep them for potential seek() calls
       this.emit('queueEnd', { type: 'queueEnd', reason: 'completed' });
       return;
     }
@@ -469,7 +487,9 @@ class TTSPlaybackManager extends EventEmitter {
     });
 
     if (status.didJustFinish) {
-      console.log('[TTSPlaybackManager] Audio finished, advancing to next');
+      console.log('==================================================');
+      console.log('[TTSPlaybackManager] ⚠️ AUDIO FINISHED - ADVANCING TO NEXT');
+      console.log('==================================================');
       // Auto-advance to next
       this.next();
     }

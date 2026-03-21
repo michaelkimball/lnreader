@@ -110,34 +110,41 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
             mediaSession = MediaSessionCompat(appContext, "LNReaderTTS").apply {
                 setCallback(object : MediaSessionCompat.Callback() {
                     override fun onPlay() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onPlay() called")
                         isPlaying = true
                         sendEvent("TTSPlay")
                         updateNotification()
                     }
 
                     override fun onPause() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onPause() called")
                         isPlaying = false
                         sendEvent("TTSPause")
                         updateNotification()
                     }
 
                     override fun onStop() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onStop() called")
                         sendEvent("TTSStop")
                     }
 
                     override fun onSkipToPrevious() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onSkipToPrevious() called")
                         sendEvent("TTSPrev")
                     }
 
                     override fun onSkipToNext() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onSkipToNext() called")
                         sendEvent("TTSNext")
                     }
                     
                     override fun onRewind() {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onRewind() called")
                         sendEvent("TTSRewind")
                     }
 
                     override fun onSeekTo(pos: Long) {
+                        android.util.Log.d("NativeTTSMediaControl", "MediaSession onSeekTo($pos) called")
                         // pos is in our scaled ms domain: elementIndex * 1000
                         val elementIndex = pos / 1000L
                         currentPosition = elementIndex
@@ -145,7 +152,13 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
                         sendSeekEvent(elementIndex)
                     }
                 })
+                // Enable bluetooth and external media button support
+                setFlags(
+                    MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                    MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+                )
                 isActive = true
+                android.util.Log.d("NativeTTSMediaControl", "MediaSession created and activated with bluetooth support")
             }
         }
     }
@@ -195,6 +208,8 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
 
         val stateBuilder = PlaybackStateCompat.Builder()
             .setActions(
+                PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
                 PlaybackStateCompat.ACTION_PLAY_PAUSE or
                 PlaybackStateCompat.ACTION_STOP or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or

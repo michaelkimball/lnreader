@@ -115,6 +115,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   const appStateRef = useRef(AppState.currentState);
   const ttsQueueRef = useRef<string[]>([]);
   const ttsQueueIndexRef = useRef<number>(0);
+  const ttsFullQueueInitializedRef = useRef<boolean>(false);
 
   // TTS position persistence helper
   const getTTSPositionKey = (chapterId: number) => `tts_position_${chapterId}`;
@@ -125,11 +126,13 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
   useEffect(() => {
     const playListener = ttsMediaEmitter.addListener('TTSPlay', () => {
+      console.log('[WebViewReader] TTSPlay event received from bluetooth/notification');
       // Resume playback (expo-av true pause)
       ttsPlaybackManager.resume();
     });
     
     const pauseListener = ttsMediaEmitter.addListener('TTSPause', () => {
+      console.log('[WebViewReader] TTSPause event received from bluetooth/notification');
       // Pause playback (expo-av true pause)
       ttsPlaybackManager.pause();
     });
@@ -289,22 +292,39 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', nextState => {
+      const previousState = appStateRef.current;
       appStateRef.current = nextState;
-      if (nextState === 'active' && isTTSReadingRef.current) {
+      
+      // Sync WebView UI when returning to foreground from background
+      if (nextState === 'active' && (previousState === 'background' || previousState === 'inactive') && isTTSReadingRef.current) {
         const index = ttsQueueIndexRef.current;
+        console.log('[WebViewReader] Returning to foreground - syncing UI at index:', index);
+        
         webViewRef.current?.injectJavaScript(`
-          if (window.tts && window.tts.allReadableElements) {
-            const idx = ${index};
-            if (idx < tts.allReadableElements.length) {
-              tts.elementsRead = idx;
-              tts.currentElement = tts.allReadableElements[idx];
-              tts.prevElement = null;
-              tts.started = true;
-              tts.reading = true;
-              tts.scrollToElement(tts.currentElement);
-              tts.currentElement.classList.add('highlight');
+          (function() {
+            if (window.tts && window.tts.allReadableElements) {
+              const idx = ${index};
+              if (idx >= 0 && idx < tts.allReadableElements.length) {
+                // Remove all existing highlights
+                tts.allReadableElements.forEach(el => el?.classList?.remove('highlight'));
+                
+                // Update TTS state
+                tts.elementsRead = idx;
+                tts.currentElement = tts.allReadableElements[idx];
+                tts.prevElement = idx > 0 ? tts.allReadableElements[idx - 1] : null;
+                tts.started = true;
+                tts.reading = true;
+                
+                // Add highlight and scroll to current element
+                if (tts.currentElement) {
+                  tts.currentElement.classList.add('highlight');
+                  tts.scrollToElement(tts.currentElement);
+                }
+                
+                console.log('[WebView TTS] UI synced to element', idx, 'of', tts.totalElements);
+              }
             }
-          }
+          })();
         `);
       }
     });
@@ -335,21 +355,51 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
     const handleElementChange = (event: PlaybackEvent) => {
       if (event.type === 'elementChange' && event.index !== undefined) {
+        // Update the queue index ref to track current position
+        // This ensures UI sync works correctly when returning from background
+        ttsQueueIndexRef.current = event.index;
+        
         // 'elementChange' is emitted when NEW audio starts playing
         // WebView already advanced via handleQueueEnd ('queueEnd' → inject tts.next())
         // This event is just for UI updates - do NOT inject tts.next() here!
-        // Could update UI here if needed (e.g., progress indicators)
+        console.log('[WebViewReader] Element changed to index:', event.index);
       }
     };
 
     const handleQueueEnd = (event: PlaybackEvent) => {
+      console.log('##################################################');
+      console.log('[WebViewReader] ⚠️ QUEUE END EVENT RECEIVED');
+      console.log('##################################################');
+      
       if (event.type === 'queueEnd') {
         if (event.reason === 'completed') {
-          // Call tts.next() to advance to next element in WebView queue
+          // Check if app is in background or screen is locked
+          const isBackground = appStateRef.current === 'background' || appStateRef.current === 'inactive';
+          
+          console.log('[WebViewReader] handleQueueEnd - isBackground:', isBackground, 'appState:', appStateRef.current, 'queueLength:', ttsQueueRef.current.length);
+          
+          if (isBackground && ttsQueueRef.current.length > 0) {
+            // Background playback: WebView doesn't execute in background
+            const nextIndex = ttsQueueIndexRef.current + 1;
+            console.log('[WebViewReader] Background mode - advancing from', ttsQueueIndexRef.current, 'to', nextIndex, 'of', ttsQueueRef.current.length);
+            
+            if (nextIndex < ttsQueueRef.current.length) {
+              ttsQueueIndexRef.current = nextIndex;
+              console.log('[WebViewReader] Using seek() to play preloaded audio at index', nextIndex);
+              
+              // Use seek() which plays from the existing preloaded queue without resetting it
+              ttsPlaybackManager.seek(nextIndex);
+              return;
+            }
+          }
+          
+          // Foreground: use WebView queue
+          console.log('[WebViewReader] Injecting tts.next() into WebView');
           webViewRef.current?.injectJavaScript('tts.next?.()');
         } else {
           // User stopped or error - end TTS session
           isTTSReadingRef.current = false;
+          ttsFullQueueInitializedRef.current = false; // Reset for next TTS session
           dismissTTSNotification();
           webViewRef.current?.injectJavaScript('tts.stop?.()');
         }
@@ -360,6 +410,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       if (event.type === 'error') {
         showToast(event.message || 'TTS error occurred', 'error');
         isTTSReadingRef.current = false;
+        ttsFullQueueInitializedRef.current = false; // Reset for next TTS session
         dismissTTSNotification();
       }
     };
@@ -453,6 +504,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       showsVerticalScrollIndicator={false}
       javaScriptEnabled={true}
       webviewDebuggingEnabled={__DEV__}
+      androidLayerType="software"
       onLoadEnd={() => {
         // Update battery level when WebView finishes loading
         const currentBatteryLevel = getBatteryLevelSync();
@@ -516,6 +568,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             } else {
               ttsQueueIndexRef.current = 0;
             }
+            
+            console.log('[WebViewReader] tts-queue received with', queue.length, 'elements - will initialize PlaybackManager on first speak');
             break;
           }
           case 'hide':
@@ -559,6 +613,26 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
                 return;
               }
               
+              // If PlaybackManager already initialized with full queue, don't call play() again
+              if (ttsFullQueueInitializedRef.current) {
+                console.log('[WebViewReader] Ignoring speak event - full queue already initialized, playing via preloader');
+                // Just update notification
+                updateTTSNotification({
+                  novelName: novel?.name || 'Unknown',
+                  chapterName: chapter.name,
+                  coverUri: novel?.cover || '',
+                  isPlaying: true,
+                });
+                if (
+                  typeof event.index === 'number' &&
+                  typeof event.total === 'number' &&
+                  event.total > 0
+                ) {
+                  updateTTSProgress(event.index, event.total);
+                }
+                return;
+              }
+              
               if (!isTTSReadingRef.current) {
                 isTTSReadingRef.current = true;
                 showTTSNotification({
@@ -582,7 +656,43 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
               ) {
                 updateTTSProgress(event.index, event.total);
               }
-              speakText(event.data);
+              
+              // First speak event: initialize with full queue if available
+              if (ttsQueueRef.current.length > 1) {
+                console.log('[WebViewReader] First speak - initializing PlaybackManager with full queue of', ttsQueueRef.current.length, 'elements');
+                const engine = readerSettingsRef.current.tts?.engine || 'expo' as TTSEngine;
+                const integrationSettings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+                
+                let voice = '';
+                if (engine === 'microsoft') {
+                  voice = readerSettingsRef.current.tts?.microsoftVoice?.shortName || '';
+                  if (integrationSettings?.microsoftSpeech?.enabled) {
+                    if (!microsoftSpeechService.isReady()) {
+                      microsoftSpeechService.initialize({
+                        subscriptionKey: integrationSettings.microsoftSpeech.subscriptionKey!,
+                        region: integrationSettings.microsoftSpeech.region!,
+                        voice: voice,
+                      });
+                    }
+                  }
+                } else {
+                  voice = readerSettingsRef.current.tts?.voice?.identifier || '';
+                }
+
+                const voiceSettings: VoiceSettings = {
+                  voice,
+                  pitch: readerSettingsRef.current.tts?.pitch || 1,
+                  rate: readerSettingsRef.current.tts?.rate || 1,
+                  engine,
+                };
+                
+                // Initialize with FULL queue
+                ttsPlaybackManager.play(ttsQueueRef.current, event.index || 0, chapter.id, novel?.id || 0, voiceSettings);
+                ttsFullQueueInitializedRef.current = true;
+              } else {
+                // Fallback: single element
+                speakText(event.data);
+              }
             } else {
               webViewRef.current?.injectJavaScript('tts.next?.()');
             }
@@ -597,6 +707,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             ttsPlaybackManager.stop(true); // fromPlay=true to skip queueEnd emission
             if (!autoStartTTSRef.current) {
               isTTSReadingRef.current = false;
+              ttsFullQueueInitializedRef.current = false; // Reset for next TTS session
               ttsQueueRef.current = [];
               ttsQueueIndexRef.current = 0;
               dismissTTSNotification();
