@@ -19,12 +19,18 @@ export {
   type RepositoryRow,
   type RepositoryInsert,
 } from './repository';
+export {
+  ttsDownload as ttsDownloadSchema,
+  type TTSDownloadRow,
+  type TTSDownloadInsert,
+} from './ttsDownload';
 
 import { category } from './category';
 import { novel } from './novel';
 import { chapter } from './chapter';
 import { novelCategory } from './novelCategory';
 import { repository } from './repository';
+import { ttsDownload } from './ttsDownload';
 
 /**
  * Unified schema object containing all database tables
@@ -36,6 +42,7 @@ export const schema = {
   chapter,
   novelCategory,
   repository,
+  ttsDownload,
 } as const;
 
 export type Schema = typeof schema;

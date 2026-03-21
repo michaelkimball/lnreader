@@ -15,13 +15,21 @@ interface IntegrationsSettingsScreenProps {
 
 const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenProps) => {
   const theme = useTheme();
-  const { microsoftSpeech, setIntegrationSettings } = useIntegrationSettings();
+  const { microsoftSpeech, azureBlobStorage, setIntegrationSettings } = useIntegrationSettings();
 
+  // Microsoft Speech state
   const [subscriptionKey, setSubscriptionKey] = useState(microsoftSpeech?.subscriptionKey || '');
   const [region, setRegion] = useState(microsoftSpeech?.region || '');
   const [isEnabled, setIsEnabled] = useState(microsoftSpeech?.enabled || false);
   const [isValidating, setIsValidating] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Azure Blob Storage state
+  const [blobAccountName, setBlobAccountName] = useState(azureBlobStorage?.accountName || '');
+  const [blobAccountKey, setBlobAccountKey] = useState(azureBlobStorage?.accountKey || '');
+  const [blobContainerName, setBlobContainerName] = useState(azureBlobStorage?.containerName || 'tts-inputs');
+  const [isBlobEnabled, setIsBlobEnabled] = useState(azureBlobStorage?.enabled || false);
+  const [showBlobHelpModal, setShowBlobHelpModal] = useState(false);
 
   const handleSave = () => {
     setIntegrationSettings({
@@ -29,6 +37,12 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
         subscriptionKey,
         region,
         enabled: isEnabled,
+      },
+      azureBlobStorage: {
+        accountName: blobAccountName,
+        accountKey: blobAccountKey,
+        containerName: blobContainerName,
+        enabled: isBlobEnabled,
       },
     });
     showToast('Settings saved successfully');
@@ -182,6 +196,87 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
         </List.Section>
 
         <List.Section>
+          <List.SubHeader theme={theme}>Azure Blob Storage (For Offline Downloads)</List.SubHeader>
+          <List.InfoItem
+            title="About Azure Blob Storage"
+            description="Required for bulk TTS downloads using Azure Batch Synthesis API. Enables offline playback at 66% cost savings."
+            theme={theme}
+            icon="information-outline"
+            onPress={() => setShowBlobHelpModal(true)}
+          />
+          <List.Item
+            title="Enable Blob Storage"
+            description={isBlobEnabled ? 'Active' : 'Disabled'}
+            theme={theme}
+            onPress={() => setIsBlobEnabled(!isBlobEnabled)}
+            rightIcon={
+              <Switch
+                value={isBlobEnabled}
+                onValueChange={(value) => {
+                  setIsBlobEnabled(value);
+                  if (!value) {
+                    setIntegrationSettings({
+                      microsoftSpeech: {
+                        subscriptionKey,
+                        region,
+                        enabled: isEnabled,
+                      },
+                      azureBlobStorage: {
+                        accountName: blobAccountName,
+                        accountKey: blobAccountKey,
+                        containerName: blobContainerName,
+                        enabled: false,
+                      },
+                    });
+                  }
+                }}
+                theme={theme}
+              />
+            }
+          />
+          <View style={styles.inputContainer}>
+            <TextInput
+              label="Storage Account Name"
+              value={blobAccountName}
+              onChangeText={setBlobAccountName}
+              mode="outlined"
+              placeholder="e.g., lnreadertts"
+              style={styles.input}
+              theme={{ colors: { primary: theme.primary } }}
+              outlineColor={theme.textColorSecondary}
+              textColor={theme.textColorPrimary}
+            />
+          </View>
+          <View style={styles.inputContainer}>
+            <TextInput
+              label="Account Key"
+              value={blobAccountKey}
+              onChangeText={setBlobAccountKey}
+              mode="outlined"
+              placeholder="Enter your storage account key"
+              secureTextEntry
+              style={styles.input}
+              theme={{ colors: { primary: theme.primary } }}
+              outlineColor={theme.textColorSecondary}
+              textColor={theme.textColorPrimary}
+            />
+          </View>
+          <View style={styles.inputContainer}>
+            <TextInput
+              label="Container Name"
+              value={blobContainerName}
+              onChangeText={setBlobContainerName}
+              mode="outlined"
+              placeholder="tts-inputs"
+              style={styles.input}
+              theme={{ colors: { primary: theme.primary } }}
+              outlineColor={theme.textColorSecondary}
+              textColor={theme.textColorPrimary}
+            />
+          </View>
+        </List.Section>
+
+        <List.Section>
           <List.SubHeader theme={theme}>Usage Notes</List.SubHeader>
           <List.InfoItem
             title="Network Required"
@@ -228,6 +323,39 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
             5. Enter the credentials above and click "Validate"
           </Text>
           <Button title="Got it" onPress={() => setShowHelpModal(false)} mode="contained" />
+        </Modal>
+        <Modal
+          visible={showBlobHelpModal}
+          onDismiss={() => setShowBlobHelpModal(false)}
+          contentContainerStyle={{
+            backgroundColor: theme.background,
+            margin: 20,
+            padding: 20,
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ color: theme.textColorPrimary, fontSize: 18, fontWeight: 'bold', marginBottom: 12 }}>
+            Setting Up Azure Blob Storage
+          </Text>
+          <Text style={{ color: theme.textColorPrimary, marginBottom: 8 }}>
+            1. Create a Storage Account in your Azure portal
+          </Text>
+          <Text style={{ color: theme.textColorPrimary, marginBottom: 8 }}>
+            2. Create a blob container (e.g., "tts-inputs")
+          </Text>
+          <Text style={{ color: theme.textColorPrimary, marginBottom: 8 }}>
+            3. Set container public access to "Blob" or use SAS tokens
+          </Text>
+          <Text style={{ color: theme.textColorPrimary, marginBottom: 8 }}>
+            4. Copy account name and key from "Access keys" section
+          </Text>
+          <Text style={{ color: theme.textColorPrimary, marginBottom: 16 }}>
+            5. Enter credentials above and save
+          </Text>
+          <Text style={{ color: theme.textColorSecondary, fontSize: 12, marginBottom: 16 }}>
+            Note: Blob Storage is only needed for bulk downloads. Real-time TTS works without it.
+          </Text>
+          <Button title="Got it" onPress={() => setShowBlobHelpModal(false)} mode="contained" />
         </Modal>
       </Portal>
     </SafeAreaView>

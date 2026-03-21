@@ -14,6 +14,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import TTSAudioPreloader, { TTSQueueItem } from './TTSAudioPreloader';
 import { VoiceSettings } from './TTSAudioGenerator';
 import NativeTTSForegroundService from '@specs/NativeTTSForegroundService';
+import { getAudioFilePaths, hasCompletedDownload } from '@database/queries/TTSDownloadQueries';
 
 export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'stopped';
 
@@ -165,6 +166,17 @@ class TTSPlaybackManager extends EventEmitter {
         '',
         false
       );
+
+      // TODO: Phase 2 - Check for offline downloaded audio
+      // const hasOfflineAudio = await hasCompletedDownload(chapterId);
+      // if (hasOfflineAudio) {
+      //   const audioFiles = await getAudioFilePaths(chapterId);
+      //   if (audioFiles && audioFiles.length === textElements.length) {
+      //     // Play from local files instead of generating
+      //     // This requires different playback logic since we have pre-generated MP3s
+      //     // return this.playFromOfflineFiles(audioFiles, startIndex);
+      //   }
+      // }
 
       console.log('[TTSPlaybackManager] Starting preloader...');
       // Start preloading

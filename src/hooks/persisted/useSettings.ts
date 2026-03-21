@@ -77,6 +77,12 @@ export interface IntegrationSettings {
     region?: string;
     enabled?: boolean;
   };
+  azureBlobStorage?: {
+    accountName?: string;
+    accountKey?: string;
+    containerName?: string;
+    enabled?: boolean;
+  };
 }
 
 export interface LibrarySettings {
