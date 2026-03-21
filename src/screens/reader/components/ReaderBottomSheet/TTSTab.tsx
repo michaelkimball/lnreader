@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { View, StyleSheet, Text, ScrollView, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { View, StyleSheet, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Slider from '@react-native-community/slider';
 import { getAvailableVoicesAsync, Voice } from 'expo-speech';
 import { getLocales } from 'expo-localization';
+import WebView from 'react-native-webview';
 import {
   useTheme,
   useChapterGeneralSettings,
@@ -17,6 +18,11 @@ import { List, Button } from '@components/index';
 import { Portal, Modal, Chip } from 'react-native-paper';
 import ReaderSheetPreferenceItem from './ReaderSheetPreferenceItem';
 import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
+import { extractChapterTextElements, estimateAudioSize, validateTextElements } from '@utils/tts/extractChapterText';
+import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
+import { getTTSDownload } from '@database/queries/TTSDownloadQueries';
+import { showToast } from '@utils/showToast';
+import { useChapterContext } from '../../ChapterContext';
 
 interface VoicePickerModalProps {
   visible: boolean;
@@ -358,6 +364,8 @@ const MicrosoftVoicePickerModal: React.FC<MicrosoftVoicePickerModalProps> = ({
 
 const TTSTab: React.FC = () => {
   const theme = useTheme();
+  const { novel, chapter, webViewRef } = useChapterContext();
+  
   const {
     TTSEnable = true,
     setChapterGeneralSettings,
@@ -371,9 +379,31 @@ const TTSTab: React.FC = () => {
   const [voiceModalVisible, setVoiceModalVisible] = useState(false);
   const [msVoiceModalVisible, setMsVoiceModalVisible] = useState(false);
   const [loadingMsVoices, setLoadingMsVoices] = useState(false);
+  
+  // Download state
+  const [downloadStatus, setDownloadStatus] = useState<'none' | 'pending' | 'processing' | 'completed' | 'failed'>('none');
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const selectedEngine: TTSEngine = tts?.engine || 'expo';
   const isMicrosoftEnabled = microsoftSpeech?.enabled && microsoftSpeech.subscriptionKey && microsoftSpeech.region;
+  
+  // Check if chapter has completed download
+  useEffect(() => {
+    const checkDownloadStatus = async () => {
+      try {
+        const download = await getTTSDownload(chapter.id);
+        if (download) {
+          setDownloadStatus(download.status as 'none' | 'pending' | 'processing' | 'completed' | 'failed');
+        } else {
+          setDownloadStatus('none');
+        }
+      } catch (error) {
+        console.error('[TTSTab] Failed to check download status:', error);
+      }
+    };
+    
+    checkDownloadStatus();
+  }, [chapter.id]);
 
   // Load Expo voices
   useEffect(() => {
@@ -421,6 +451,90 @@ const TTSTab: React.FC = () => {
   const handleEngineChange = useCallback((engine: TTSEngine) => {
     setChapterReaderSettings({ tts: { ...tts, engine } });
   }, [tts, setChapterReaderSettings]);
+  
+  // Handle offline TTS download
+  const handleDownloadChapter = useCallback(async () => {
+    if (!webViewRef || !webViewRef.current) {
+      showToast('WebView not ready');
+      return;
+    }
+    
+    if (downloadStatus === 'completed' || downloadStatus === 'processing' || downloadStatus === 'pending') {
+      showToast('Download already exists for this chapter');
+      return;
+    }
+    
+    setIsDownloading(true);
+    
+    try {
+      // Extract text elements from chapter
+      const result = await extractChapterTextElements(webViewRef as React.RefObject<WebView>, 10000);
+      
+      if (!result.success) {
+        showToast(`Failed to extract chapter text: ${result.error || 'Unknown error'}`);
+        setIsDownloading(false);
+        return;
+      }
+      
+      // Validate text elements
+      const validation = validateTextElements(result.elements);
+      if (!validation.valid) {
+        showToast(`Invalid chapter content: ${validation.error}`);
+        setIsDownloading(false);
+        return;
+      }
+      
+      // Show warnings if any
+      if (validation.warnings && validation.warnings.length > 0) {
+        validation.warnings.forEach(warning => showToast(warning));
+      }
+      
+      //  Estimate size
+      const estimatedMB = estimateAudioSize(result.elements);
+      
+      // Get voice settings based on selected engine
+      let voiceName = '';
+      if (selectedEngine === 'microsoft') {
+        if (!isMicrosoftEnabled) {
+          showToast('Microsoft Speech not configured. Please set up in Settings > Integrations.');
+          setIsDownloading(false);
+          return;
+        }
+        voiceName = tts?.microsoftVoice?.shortName || '';
+        if (!voiceName) {
+          showToast('Please select a Microsoft voice first');
+          setIsDownloading(false);
+          return;
+        }
+      } else {
+        voiceName = tts?.voice?.identifier || 'System';
+      }
+      
+      const voiceSettings = {
+        voice: voiceName,
+        rate: tts?.rate || 1.0,
+        pitch: tts?.pitch || 1.0,
+        engine: selectedEngine,
+      };
+      
+      // Request download
+      await ttsDownloadManager.requestDownload({
+        chapterId: chapter.id,
+        novelId: novel?.id || 0,
+        textElements: result.elements,
+        voiceSettings,
+      });
+      
+      showToast(`Download started (${result.elements.length} elements, ~${estimatedMB}MB)`);
+      setDownloadStatus('pending');
+      
+    } catch (error: any) {
+      console.error('[TTSTab] Download failed:', error);
+      showToast(`Download failed: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [webViewRef, downloadStatus, selectedEngine, isMicrosoftEnabled, tts, chapter.id, novel?.id]);
 
   return (
     <>
@@ -560,6 +674,62 @@ const TTSTab: React.FC = () => {
                 }
                 theme={theme}
               />
+
+              {/* Offline Download Section */}
+              <View style={styles.downloadSection}>
+                <List.SubHeader theme={theme}>Offline Audio</List.SubHeader>
+                
+                <View style={[styles.downloadInfoContainer, { backgroundColor: theme.surfaceVariant }]}>
+                  <Text style={[styles.downloadInfoText, { color: theme.onSurfaceVariant }]}>
+                    Download chapter audio for offline playback using Azure Batch Synthesis (66% cost savings)
+                  </Text>
+                </View>
+                
+                {downloadStatus === 'completed' && (
+                  <View style={[styles.downloadStatusContainer, { backgroundColor: theme.surfaceVariant }]}>
+                    <Text style={[styles.downloadStatusText, { color: theme.primary }]}>
+                      ✓ Downloaded - Will play offline automatically
+                    </Text>
+                  </View>
+                )}
+                
+                {downloadStatus === 'processing' && (
+                  <View style={[styles.downloadStatusContainer, { backgroundColor: theme.surfaceVariant }]}>
+                    <ActivityIndicator size="small" color={theme.primary} />
+                    <Text style={[styles.downloadStatusText, { color: theme.onSurfaceVariant }, { marginLeft: 8 }]}>
+                      Processing download...
+                    </Text>
+                  </View>
+                )}
+                
+                {downloadStatus === 'pending' && (
+                  <View style={[styles.downloadStatusContainer, { backgroundColor: theme.surfaceVariant }]}>
+                    <ActivityIndicator size="small" color={theme.primary} />
+                    <Text style={[styles.downloadStatusText, { color: theme.onSurfaceVariant }, { marginLeft: 8 }]}>
+                      Queued for download...
+                    </Text>
+                  </View>
+                )}
+                
+                {downloadStatus === 'failed' && (
+                  <View style={[styles.downloadStatusContainer, { backgroundColor: theme.errorContainer }]}>
+                    <Text style={[styles.downloadStatusText, { color: theme.error }]}>
+                      ✗ Download failed - Try again
+                    </Text>
+                  </View>
+                )}
+                
+                <View style={styles.downloadButtonContainer}>
+                  <Button
+                    title={downloadStatus === 'none' || downloadStatus === 'failed' ? 'Download Chapter' : 'Already Downloaded'}
+                    mode={downloadStatus === 'none' || downloadStatus === 'failed' ? 'contained' : 'outlined'}
+                    onPress={handleDownloadChapter}
+                    disabled={isDownloading || downloadStatus === 'completed' || downloadStatus === 'processing' || downloadStatus === 'pending'}
+                    loading={isDownloading}
+                    style={styles.downloadButton}
+                  />
+                </View>
+              </View>
 
               <View style={styles.resetButtonContainer}>
                 <Button
@@ -714,5 +884,38 @@ const styles = StyleSheet.create({
   },
   checkIcon: {
     fontSize: 16,
+  },
+  downloadSection: {
+    marginTop: 16,
+    paddingTop: 8,
+  },
+  downloadInfoContainer: {
+    marginHorizontal: 16,
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 8,
+  },
+  downloadInfoText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  downloadStatusContainer: {
+    marginHorizontal: 16,
+    marginVertical: 8,
+    padding: 12,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  downloadStatusText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  downloadButtonContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  downloadButton: {
+    alignSelf: 'stretch',
   },
 });

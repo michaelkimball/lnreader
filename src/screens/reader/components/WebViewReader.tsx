@@ -38,6 +38,7 @@ import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
 import { showToast } from '@utils/showToast';
 import { ttsPlaybackManager, PlaybackEvent } from '@services/tts/TTSPlaybackManager';
 import { VoiceSettings, TTSEngine } from '@services/tts/TTSAudioGenerator';
+import { handleExtractionResult } from '@utils/tts/extractChapterText';
 
 type WebViewPostEvent = {
   type: string;
@@ -551,6 +552,12 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       onMessage={(ev: { nativeEvent: { data: string } }) => {
         __DEV__ && onLogMessage(ev);
         const event: WebViewPostEvent = JSON.parse(ev.nativeEvent.data);
+        
+        // Handle text extraction results (for TTS downloads)
+        if (handleExtractionResult(event as any)) {
+          return; // Message was an extraction result, handled
+        }
+        
         switch (event.type) {
           case 'tts-queue': {
             const payload = event.data as

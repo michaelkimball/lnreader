@@ -2,7 +2,7 @@
 
 **Date**: March 21, 2026  
 **Current Status**: Infrastructure Complete, Integration Pending  
-**Completion**: ~80% of core implementation done
+**Completion**: ~87% of core implementation done (dependencies + migration complete)
 
 ---
 
@@ -186,13 +186,15 @@ interface IntegrationSettings {
 ## ❌ Missing / TODO Components
 
 ### 1. Database Migration (REQUIRED)
-**Status**: Schema created but migration not generated  
-**Action Required**:
+**Status**: ✅ Migration generated (commit d1681c6b)  
+**Migration**: `drizzle/20260321180828_living_master_mold`
+
+**Generated with**:
 ```bash
 pnpm run generate:db-migration
 ```
 
-This will create a migration file in `drizzle/` for the `TTSDownload` table.
+This migration creates the `TTSDownload` table with all indexes. Will be applied automatically on next app launch.
 
 ### 2. Download Request Integration (HIGH PRIORITY)
 **Missing**: Mechanism to request chapter downloads from UI
@@ -392,16 +394,16 @@ const handleProgressUpdate = (current: number, total: number) => {
 pnpm add @azure/storage-blob
 ```
 
-**Current Status**: NOT INSTALLED YET
+**Current Status**: ✅ INSTALLED (commit d1681c6b)
 
 ---
 
 ## 🧪 Testing Checklist
 
 ### Setup Testing
-- [ ] Install @azure/storage-blob package
-- [ ] Generate database migration
-- [ ] Apply migration to database
+- [x] Install @azure/storage-blob package (commit d1681c6b)
+- [x] Generate database migration (commit d1681c6b)
+- [ ] Apply migration to database (automatic on next launch)
 - [ ] Create Azure Storage Account
 - [ ] Create blob container ("tts-inputs")
 - [ ] Configure credentials in Settings > Integrations
@@ -445,9 +447,9 @@ pnpm add @azure/storage-blob
 ## 📋 Implementation Priority
 
 ### Critical Path (Must Do Before Testing):
-1. **Install dependencies**: `pnpm add @azure/storage-blob`
-2. **Generate migration**: `pnpm run generate:db-migration`
-3. **Azure setup**: Create Storage Account and container
+1. ✅ **Install dependencies**: `pnpm add @azure/storage-blob` (commit d1681c6b)
+2. ✅ **Generate migration**: `pnpm run generate:db-migration` (commit d1681c6b)
+3. **Azure setup**: Create Storage Account and container (USER ACTION)
 4. **Text extraction**: Implement chapter element extraction
 5. **Download button**: Add UI to trigger downloads
 6. **Offline playback**: Implement `playFromOfflineFiles()` method
@@ -549,4 +551,4 @@ pnpm add @azure/storage-blob
 
 ---
 
-**Status Summary**: Phase 2 infrastructure is 80% complete. Core services, database, and UI built. Missing: Download trigger, text extraction, offline playback integration, and testing. Estimated remaining effort: 8-12 hours.
+**Status Summary**: Phase 2 infrastructure is 87% complete (dependencies installed, migration generated in commit d1681c6b). Core services, database, and UI built. Missing: Azure setup (user action), download trigger, text extraction, offline playback integration, and testing. Estimated remaining effort: 6-10 hours.
