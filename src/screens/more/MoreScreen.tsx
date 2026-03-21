@@ -148,6 +148,17 @@ const MoreScreen = ({ navigation }: MoreStackScreenProps) => {
             theme={theme}
           />
           <List.Item
+            title="TTS Downloads"
+            description="Offline TTS audio files"
+            icon="microphone-outline"
+            onPress={() =>
+              navigation.navigate('MoreStack', {
+                screen: 'TTSDownloads',
+              })
+            }
+            theme={theme}
+          />
+          <List.Item
             title={getString('common.categories')}
             icon="label-outline"
             onPress={() =>

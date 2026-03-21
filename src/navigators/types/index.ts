@@ -68,6 +68,7 @@ export type MoreStackParamList = {
   About: undefined;
   TaskQueue: undefined;
   Downloads: undefined;
+  TTSDownloads: undefined;
   Categories: undefined;
   Statistics: undefined;
 };
@@ -113,6 +114,10 @@ export type AboutScreenProps = StackScreenProps<MoreStackParamList, 'About'>;
 export type DownloadsScreenProps = StackScreenProps<
   MoreStackParamList,
   'Downloads'
+>;
+export type TTSDownloadsScreenProps = StackScreenProps<
+  MoreStackParamList,
+  'TTSDownloads'
 >;
 export type TaskQueueScreenProps = StackScreenProps<
   MoreStackParamList,

@@ -13,6 +13,7 @@ import GeneralSettings from '../screens/settings/SettingsGeneralScreen/SettingsG
 import IntegrationsSettings from '../screens/settings/SettingsIntegrationsScreen';
 import TaskQueue from '../screens/more/TaskQueueScreen';
 import Downloads from '../screens/more/DownloadsScreen';
+import TTSDownloadsScreen from '../screens/more/TTSDownloadsScreen';
 import AppearanceSettings from '../screens/settings/SettingsAppearanceScreen/SettingsAppearanceScreen';
 import CategoriesScreen from '@screens/Categories/CategoriesScreen';
 import RespositorySettings from '@screens/settings/SettingsRepositoryScreen/SettingsRepositoryScreen';
@@ -47,6 +48,7 @@ const MoreStack = () => (
     <Stack.Screen name="About" component={About} />
     <Stack.Screen name="TaskQueue" component={TaskQueue} />
     <Stack.Screen name="Downloads" component={Downloads} />
+    <Stack.Screen name="TTSDownloads" component={TTSDownloadsScreen} />
     <Stack.Screen name="Categories" component={CategoriesScreen} />
     <Stack.Screen name="Statistics" component={StatsScreen} />
   </Stack.Navigator>
