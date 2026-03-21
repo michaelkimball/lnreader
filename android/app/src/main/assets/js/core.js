@@ -280,6 +280,8 @@ window.tts = new (function () {
       if (autoPageAdvance && hasNextChapter) {
         reader.post({ type: 'next', autoStartTTS: true });
       } else {
+        // Chapter complete - clear saved position
+        reader.post({ type: 'clear-tts-position' });
         this.stop();
         const controller = document.getElementById('TTS-Controller');
         if (controller?.firstElementChild) {
@@ -318,6 +320,11 @@ window.tts = new (function () {
     if (element && element !== reader.chapterElement) {
       const startIndex = this.allReadableElements.indexOf(element);
       this.elementsRead = startIndex >= 0 ? startIndex : 0;
+    } else if (this.savedPosition && this.savedPosition > 0 && this.savedPosition < this.totalElements) {
+      // Resume from saved position
+      console.log("[WebView] Resuming TTS from saved position:", this.savedPosition);
+      this.elementsRead = this.savedPosition;
+      this.savedPosition = null; // Clear after using
     } else {
       this.elementsRead = 0;
     }

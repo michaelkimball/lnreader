@@ -12,7 +12,7 @@ import { useTheme } from '@hooks/persisted';
 import { getString } from '@strings/translations';
 
 import { getPlugin } from '@plugins/pluginManager';
-import { MMKVStorage, getMMKVObject } from '@utils/mmkv/mmkv';
+import { MMKVStorage, getMMKVObject, setMMKVObject } from '@utils/mmkv/mmkv';
 import {
   CHAPTER_GENERAL_SETTINGS,
   CHAPTER_READER_SETTINGS,
@@ -116,6 +116,9 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   const ttsQueueRef = useRef<string[]>([]);
   const ttsQueueIndexRef = useRef<number>(0);
 
+  // TTS position persistence helper
+  const getTTSPositionKey = (chapterId: number) => `tts_position_${chapterId}`;
+
   useEffect(() => {
     readerSettingsRef.current = readerSettings;
   }, [readerSettings]);
@@ -217,9 +220,9 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   useEffect(() => {
     return () => {
       console.log('[WebViewReader] Component unmounting, stopping TTS');
+      // Save position and stop TTS properly
+      stopTTS();
       dismissTTSNotification();
-      // Stop playback on unmount
-      ttsPlaybackManager.stop();
       // Cleanup Microsoft Speech service
       if (microsoftSpeechService.isReady()) {
         microsoftSpeechService.dispose();
@@ -375,6 +378,21 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   }, [novel?.name, novel?.cover, chapter.name, webViewRef]);
 
   const stopTTS = async () => {
+    console.log('[WebViewReader] stopTTS called - isTTSReading:', isTTSReadingRef.current, 
+                'queueLength:', ttsQueueRef.current.length, 
+                'currentIndex:', ttsQueueIndexRef.current);
+    
+    // Save current TTS position from React Native state (not WebView, which might be destroyed)
+    if (isTTSReadingRef.current && ttsQueueRef.current.length > 0) {
+      const currentIndex = ttsQueueIndexRef.current;
+      const totalElements = ttsQueueRef.current.length;
+      const positionKey = getTTSPositionKey(chapter.id);
+      setMMKVObject(positionKey, { position: currentIndex, total: totalElements });
+      console.log('[WebViewReader] Saved TTS position on stop:', currentIndex, 'of', totalElements);
+    } else {
+      console.log('[WebViewReader] NOT saving position - conditions not met');
+    }
+    
     await ttsPlaybackManager.stop();
   };
 
@@ -443,6 +461,21 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             window.reader.batteryLevel.val = ${currentBatteryLevel};
           }`,
         );
+
+        // Restore saved TTS position if available
+        const positionKey = getTTSPositionKey(chapter.id);
+        const savedPosition = getMMKVObject<{ position: number; total: number }>(positionKey);
+        if (savedPosition && savedPosition.position > 0) {
+          console.log('[WebViewReader] Restoring TTS position:', savedPosition.position, 'of', savedPosition.total);
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (window.tts) {
+                window.tts.savedPosition = ${savedPosition.position};
+                console.log("[WebView] TTS saved position set:", tts.savedPosition);
+              }
+            })();
+          `);
+        }
 
         if (autoStartTTSRef.current) {
           autoStartTTSRef.current = false;
@@ -576,6 +609,20 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
               isTTSReadingRef.current = isReading;
               updateTTSPlaybackState(isReading);
             }
+            break;
+          case 'save-tts-position':
+            // Save TTS position to MMKV for resumption
+            if (typeof event.position === 'number' && typeof event.total === 'number') {
+              const positionKey = getTTSPositionKey(chapter.id);
+              setMMKVObject(positionKey, { position: event.position, total: event.total });
+              console.log('[WebViewReader] Saved TTS position:', event.position, 'of', event.total);
+            }
+            break;
+          case 'clear-tts-position':
+            // Clear saved TTS position (chapter completed)
+            const clearKey = getTTSPositionKey(chapter.id);
+            setMMKVObject(clearKey, null);
+            console.log('[WebViewReader] Cleared TTS position for chapter', chapter.id);
             break;
         }
       }}
