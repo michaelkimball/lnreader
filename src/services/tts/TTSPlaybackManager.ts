@@ -45,6 +45,7 @@ class TTSPlaybackManager extends EventEmitter {
   private isInitialized: boolean = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private isStopping: boolean = false;
+  private isOfflineMode: boolean = false; // Track if playing from offline files
 
   private constructor() {
     super();
@@ -157,6 +158,7 @@ class TTSPlaybackManager extends EventEmitter {
       this.chapterId = chapterId;
       this.novelId = novelId;
       this.voiceSettings = settings;
+      this.isOfflineMode = false;
 
       console.log('[TTSPlaybackManager] Starting foreground service...');
       // Start foreground service
@@ -168,15 +170,18 @@ class TTSPlaybackManager extends EventEmitter {
       );
 
       // TODO: Phase 2 - Check for offline downloaded audio
-      // const hasOfflineAudio = await hasCompletedDownload(chapterId);
-      // if (hasOfflineAudio) {
-      //   const audioFiles = await getAudioFilePaths(chapterId);
-      //   if (audioFiles && audioFiles.length === textElements.length) {
-      //     // Play from local files instead of generating
-      //     // This requires different playback logic since we have pre-generated MP3s
-      //     // return this.playFromOfflineFiles(audioFiles, startIndex);
-      //   }
-      // }
+      const hasOfflineAudio = await hasCompletedDownload(chapterId);
+      if (hasOfflineAudio) {
+        const audioFiles = await getAudioFilePaths(chapterId);
+        if (audioFiles && audioFiles.length === textElements.length) {
+          // Play from local files instead of generating
+          console.log('[TTSPlaybackManager] Playing from offline files:', audioFiles.length, 'files');
+          return this.playFromOfflineFiles(audioFiles, startIndex, chapterId, novelId, textElements);
+        } else if (audioFiles) {
+          console.log('[TTSPlaybackManager] Audio files mismatch - expected:', textElements.length, 'got:', audioFiles.length);
+          // Fall through to normal playback
+        }
+      }
 
       console.log('[TTSPlaybackManager] Starting preloader...');
       // Start preloading
@@ -199,6 +204,138 @@ class TTSPlaybackManager extends EventEmitter {
       console.error('[TTSPlaybackManager] Error in play():', error);
       this.emitError('Failed to start playback', 'PLAY_ERROR');
       this.setState('idle');
+    }
+  }
+
+  /**
+   * Play from pre-downloaded offline audio files
+   * Bypass preloader and play directly from local file URIs
+   * 
+   * @param audioFilePaths - Array of local file paths to MP3 files
+   * @param startIndex - Index to start playback from
+   * @param chapterId - Chapter ID for tracking
+   * @param novelId - Novel ID for tracking
+   * @param textElements - Optional text elements for display (can be empty for offline mode)
+   */
+  async playFromOfflineFiles(
+    audioFilePaths: string[],
+    startIndex: number = 0,
+    chapterId: number,
+    novelId: number,
+    textElements: string[] = []
+  ): Promise<void> {
+    console.log('[TTSPlaybackManager] playFromOfflineFiles() called with', audioFilePaths.length, 'files');
+    
+    // Prevent re-entrant calls
+    if (this.state === 'loading' || this.state === 'playing') {
+      console.log('[TTSPlaybackManager] Already in state:', this.state, '- ignoring playFromOfflineFiles() call');
+      return;
+    }
+    
+    try {
+      // Stop any existing playback
+      await this.stop(true);
+
+      // Clear any pending idle timer
+      if (this.idleTimer) {
+        clearTimeout(this.idleTimer);
+        this.idleTimer = null;
+      }
+
+      // Set state and offline mode flag
+      console.log('[TTSPlaybackManager] Setting state to loading for offline playback, index to', startIndex);
+      this.setState('loading');
+      this.currentIndex = startIndex;
+      this.chapterId = chapterId;
+      this.novelId = novelId;
+      this.isOfflineMode = true;
+
+      // Start foreground service
+      NativeTTSForegroundService.startService(
+        'LNReader',
+        'Playing offline audio...',
+        '',
+        false
+      );
+
+      // Build queue from file paths (no need for preloader)
+      this.queue = audioFilePaths.map((filePath, index) => ({
+        index,
+        text: textElements[index] || `Element ${index + 1}`, // Use text if available, otherwise placeholder
+        status: 'ready', // All files are already available
+        uri: filePath, // Store file path directly in queue item
+      }));
+
+      console.log('[TTSPlaybackManager] Offline queue built with', this.queue.length, 'items');
+
+      // Emit progress
+      this.emitProgress();
+
+      // Start playing immediately (no need to wait for preloader)
+      await this.playCurrentElementOffline();
+
+    } catch (error) {
+      console.error('[TTSPlaybackManager] Error in playFromOfflineFiles():', error);
+      this.emitError('Failed to start offline playback', 'PLAY_OFFLINE_ERROR');
+      this.setState('idle');
+    }
+  }
+
+  /**
+   * Play current element from offline files (internal method)
+   * Similar to playCurrentElement() but uses URIs directly from queue
+   */
+  private async playCurrentElementOffline(): Promise<void> {
+    console.log('[TTSPlaybackManager] playCurrentElementOffline() called, currentIndex:', this.currentIndex);
+    try {
+      const item = this.queue[this.currentIndex];
+      if (!item || !item.uri) {
+        console.warn('[TTSPlaybackManager] No item or URI at current index');
+        await this.next();
+        return;
+      }
+
+      const uri = item.uri;
+      console.log('[TTSPlaybackManager] Playing offline URI:', uri);
+
+      // Unload previous sound
+      if (this.currentSound) {
+        await this.currentSound.unloadAsync();
+        this.currentSound = null;
+      }
+
+      // Load and play from local file
+      const { sound } = await Audio.Sound.createAsync(
+        { uri },
+        { shouldPlay: true },
+        this.onPlaybackStatusUpdate.bind(this)
+      );
+
+      console.log('[TTSPlaybackManager] Offline sound created and playing!');
+      this.currentSound = sound;
+      this.setState('playing');
+
+      // Update UI
+      this.emit('elementChange', {
+        type: 'elementChange',
+        index: this.currentIndex,
+        text: item.text,
+      });
+      this.emitProgress();
+
+      // Update foreground service
+      NativeTTSForegroundService.startService(
+        'LNReader',
+        `${item.text.substring(0, 40)}... (offline)`,
+        '',
+        true
+      );
+
+    } catch (error) {
+      console.error('[TTSPlaybackManager] Error in playCurrentElementOffline():', error);
+      this.emitError('Failed to play offline element', 'PLAY_OFFLINE_ELEMENT_ERROR');
+      // Try to skip to next
+      await this.next();
     }
   }
 
@@ -294,6 +431,7 @@ class TTSPlaybackManager extends EventEmitter {
       this.setState('stopped');
       this.currentIndex = -1;
       this.queue = [];
+      this.isOfflineMode = false;
       
       // Only emit queueEnd if this is a real stop (not from play())
       // Otherwise it triggers WebView tts.stop() which resets the WebView's queue
@@ -347,12 +485,16 @@ class TTSPlaybackManager extends EventEmitter {
       await this.preloader.ensureBufferAhead(index);
       console.log('[TTSPlaybackManager] seek() - buffer ensured');
 
-      // Play new element
+      // Play new element (use appropriate method based on mode)
       if (this.state === 'playing' || this.state === 'paused') {
-        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- calling playCurrentElement()');
-        await this.playCurrentElement();
+        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- calling play method');
+        if (this.isOfflineMode) {
+          await this.playCurrentElementOffline();
+        } else {
+          await this.playCurrentElement();
+        }
       } else {
-        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- NOT calling playCurrentElement()');
+        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- NOT calling play method');
       }
 
       this.emitProgress();
