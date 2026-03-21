@@ -75,12 +75,24 @@ Keep this running in a separate terminal.
 
 **2. Build and install the APK:**
 
+**Install Debug Build on phone**
+
 ```bash
 # Build the debug APK
 cd android && ./gradlew assembleDebug
 
 # Install via ADB (from WSL)
 adb install -r ./app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Install Release Build on phone**
+
+```bash
+# Build the release APK
+pnpm run build:release:android
+
+# Install via ADB (from WSL)
+adb install -r android/app/build/outputs/apk/release/app-release.apk
 ```
 
 **3. Configure port forwarding (choose ONE method):**
