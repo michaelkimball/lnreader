@@ -41,6 +41,21 @@ export interface TTSDownloadWithProgress {
 // #region Mutations
 
 /**
+ * Update download status to processing
+ */
+export const markDownloadProcessing = async (downloadId: number): Promise<void> => {
+  await dbManager.write(async tx => {
+    tx.update(ttsDownloadSchema)
+      .set({
+        status: 'processing',
+        startedAt: new Date().toISOString(),
+      })
+      .where(eq(ttsDownloadSchema.id, downloadId))
+      .run();
+  });
+};
+
+/**
  * Start a new download for a chapter
  */
 export const createTTSDownload = async (
@@ -195,13 +210,11 @@ export const retryDownload = async (downloadId: number): Promise<void> => {
  */
 export const deleteTTSDownload = async (chapterId: number): Promise<TTSDownloadRow | null> => {
   // First get the download to access file paths for cleanup
-  const download = await dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.chapterId, chapterId))
-      .get();
-  });
+  const download = await dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.chapterId, chapterId))
+    .get();
 
   if (!download) {
     return null;
@@ -222,13 +235,11 @@ export const deleteTTSDownload = async (chapterId: number): Promise<TTSDownloadR
  */
 export const deleteTTSDownloads = async (chapterIds: number[]): Promise<TTSDownloadRow[]> => {
   // Get downloads for cleanup
-  const downloads = await dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(inArray(ttsDownloadSchema.chapterId, chapterIds))
-      .all();
-  });
+  const downloads = await dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(inArray(ttsDownloadSchema.chapterId, chapterIds))
+    .all();
 
   // Delete from database
   await dbManager.write(async tx => {
@@ -248,54 +259,46 @@ export const deleteTTSDownloads = async (chapterIds: number[]): Promise<TTSDownl
  * Get download by chapter ID
  */
 export const getTTSDownload = async (chapterId: number): Promise<TTSDownloadRow | null> => {
-  return dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.chapterId, chapterId))
-      .get();
-  });
+  return dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.chapterId, chapterId))
+    .get();
 };
 
 /**
  * Get download by ID
  */
 export const getTTSDownloadById = async (downloadId: number): Promise<TTSDownloadRow | null> => {
-  return dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.id, downloadId))
-      .get();
-  });
+  return dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.id, downloadId))
+    .get();
 };
 
 /**
  * Get all downloads for a novel
  */
 export const getTTSDownloadsByNovel = async (novelId: number): Promise<TTSDownloadRow[]> => {
-  return dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.novelId, novelId))
-      .orderBy(desc(ttsDownloadSchema.createdAt))
-      .all();
-  });
+  return dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.novelId, novelId))
+    .orderBy(desc(ttsDownloadSchema.createdAt))
+    .all();
 };
 
 /**
  * Get downloads by status
  */
 export const getTTSDownloadsByStatus = async (status: DownloadStatus): Promise<TTSDownloadRow[]> => {
-  return dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.status, status))
-      .orderBy(desc(ttsDownloadSchema.createdAt))
-      .all();
-  });
+  return dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.status, status))
+    .orderBy(desc(ttsDownloadSchema.createdAt))
+    .all();
 };
 
 /**
@@ -316,18 +319,16 @@ export const getProcessingDownloads = async (): Promise<TTSDownloadRow[]> => {
  * Get completed downloads for a novel (for playback)
  */
 export const getCompletedDownloads = async (novelId: number): Promise<TTSDownloadRow[]> => {
-  return dbManager.read(async tx => {
-    return tx
-      .select()
-      .from(ttsDownloadSchema)
-      .where(
-        and(
-          eq(ttsDownloadSchema.novelId, novelId),
-          eq(ttsDownloadSchema.status, 'completed')
-        )
+  return dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(
+      and(
+        eq(ttsDownloadSchema.novelId, novelId),
+        eq(ttsDownloadSchema.status, 'completed')
       )
-      .all();
-  });
+    )
+    .all();
 };
 
 /**
@@ -343,18 +344,16 @@ export const getTTSDownloadStats = async (
   failed: number;
   totalSizeMB: number;
 }> => {
-  const stats = await dbManager.read(async tx => {
-    return tx
-      .select({
-        status: ttsDownloadSchema.status,
-        count: count(),
-        totalSize: sql<number>`SUM(${ttsDownloadSchema.totalSizeMB})`,
-      })
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.novelId, novelId))
-      .groupBy(ttsDownloadSchema.status)
-      .all();
-  });
+  const stats = await dbManager
+    .select({
+      status: ttsDownloadSchema.status,
+      count: count(),
+      totalSize: sql<number>`SUM(${ttsDownloadSchema.totalSizeMB})`,
+    })
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.novelId, novelId))
+    .groupBy(ttsDownloadSchema.status)
+    .all();
 
   const result = {
     total: 0,
@@ -401,15 +400,13 @@ export const hasCompletedDownload = async (chapterId: number): Promise<boolean> 
  * Get total storage used by downloads (in MB)
  */
 export const getTotalDownloadStorage = async (): Promise<number> => {
-  const result = await dbManager.read(async tx => {
-    return tx
-      .select({
-        totalSize: sql<number>`SUM(${ttsDownloadSchema.totalSizeMB})`,
-      })
-      .from(ttsDownloadSchema)
-      .where(eq(ttsDownloadSchema.status, 'completed'))
-      .get();
-  });
+  const result = await dbManager
+    .select({
+      totalSize: sql<number>`SUM(${ttsDownloadSchema.totalSizeMB})`,
+    })
+    .from(ttsDownloadSchema)
+    .where(eq(ttsDownloadSchema.status, 'completed'))
+    .get();
 
   return result?.totalSize || 0;
 };

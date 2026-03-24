@@ -24,6 +24,7 @@ import {
   updateDownloadProgress,
   markDownloadCompleted,
   markDownloadFailed,
+  markDownloadProcessing,
   retryDownload,
   getPendingDownloads,
   getProcessingDownloads,
@@ -31,7 +32,7 @@ import {
   deleteTTSDownload,
   getTTSDownload,
 } from '@database/queries/TTSDownloadQueries';
-import * as FileSystem from 'expo-file-system';
+import { documentDirectory, File, Directory } from 'expo-file-system';
 import { TTSDownloadRow } from '@database/schema';
 
 // Event types
@@ -57,7 +58,7 @@ class TTSDownloadManager extends EventEmitter {
   private readonly MAX_RETRY_ATTEMPTS = 3;
 
   // Storage directory for downloaded audio files
-  private readonly STORAGE_BASE_DIR = `${FileSystem.documentDirectory}tts-downloads/`;
+  private readonly STORAGE_BASE_DIR = `${documentDirectory}tts-downloads/`;
 
   constructor() {
     super();
@@ -70,9 +71,9 @@ class TTSDownloadManager extends EventEmitter {
   async initialize(): Promise<void> {
     try {
       // Ensure storage directory exists
-      const dirInfo = await FileSystem.getInfoAsync(this.STORAGE_BASE_DIR);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(this.STORAGE_BASE_DIR, { intermediates: true });
+      const storageDir = new Directory(this.STORAGE_BASE_DIR);
+      if (!(await storageDir.exists())) {
+        await storageDir.create();
         console.log('[TTSDownloadManager] Created storage directory:', this.STORAGE_BASE_DIR);
       }
 
@@ -112,6 +113,13 @@ class TTSDownloadManager extends EventEmitter {
       voiceSettings.pitch?.toString() || '1.0',
       'microsoft'
     );
+
+    // Store text elements temporarily for processing
+    const tempFilePath = `${this.STORAGE_BASE_DIR}temp_${downloadId}.json`;
+    const tempFile = new File(tempFilePath);
+    await tempFile.write(JSON.stringify({ textElements, voiceSettings }));
+
+    console.log('[TTSDownloadManager] Stored text elements for download:', downloadId);
 
     // Emit queue changed event
     this.emitQueueChanged();
@@ -154,7 +162,13 @@ class TTSDownloadManager extends EventEmitter {
 
         // Process next pending download
         const download = pending[0];
-        await this.processSingleDownload(download);
+        
+        try {
+          await this.processSingleDownload(download);
+        } catch (error) {
+          console.error('[TTSDownloadManager] Failed to process download, continuing with queue:', error);
+          // Error already handled in processSingleDownload, just continue
+        }
 
         // Small delay before next
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -175,19 +189,62 @@ class TTSDownloadManager extends EventEmitter {
     try {
       console.log('[TTSDownloadManager] Processing download:', download.id);
 
-      // Get chapter content (this will need to be passed from the caller or fetched)
-      // For now, throw error if we don't have the content
-      // TODO: Add mechanism to retrieve chapter text elements
-      throw new Error('TODO: Implement chapter text retrieval');
+      // Mark as processing immediately to prevent stuck pending state
+      await markDownloadProcessing(download.id);
 
-      // The actual implementation would be:
-      // 1. Get text elements from chapter
-      // 2. Submit batch job
-      // 3. Start polling
+      // Get text elements from temp file
+      const tempFilePath = `${this.STORAGE_BASE_DIR}temp_${download.id}.json`;
+      const tempFile = new File(tempFilePath);
+      
+      if (!(await tempFile.exists())) {
+        throw new Error(`Temp file not found for download ${download.id}`);
+      }
+
+      const tempData = await tempFile.text();
+      const { textElements, voiceSettings } = JSON.parse(tempData) as {
+        textElements: string[];
+        voiceSettings: VoiceSettings;
+      };
+
+      console.log('[TTSDownloadManager] Retrieved text elements:', textElements.length);
+
+      // Create SSML for batch synthesis
+      const ssml = this.createSSML(textElements, voiceSettings);
+
+      // Upload SSML to Azure Blob Storage
+      const blobName = `chapter_${download.chapterId}_${Date.now()}.xml`;
+      const blobUrl = await azureBlobStorage.uploadSSML(blobName, ssml);
+      
+      console.log('[TTSDownloadManager] Uploaded SSML to blob:', blobName);
+
+      // Submit batch job
+      const jobId = await azureBatchSynthesis.submitBatchJob(
+        blobUrl,
+        `Chapter ${download.chapterId}`,
+        voiceSettings
+      );
+
+      // Update download with job ID
+      await updateBatchJobId(download.id, jobId);
+
+      console.log('[TTSDownloadManager] Submitted batch job:', jobId);
+
+      // Start polling for this job
+      this.pollJobStatus(download.id, jobId);
+
+      // Delete temp file after successful submission
+      await tempFile.delete();
       
     } catch (error) {
       console.error('[TTSDownloadManager] Failed to process download:', error);
       await markDownloadFailed(download.id, error instanceof Error ? error.message : 'Unknown error');
+      
+      // Clean up temp file on error
+      const cleanupFile = new File(`${this.STORAGE_BASE_DIR}temp_${download.id}.json`);
+      if (await cleanupFile.exists()) {
+        await cleanupFile.delete();
+      }
+      
       this.emit('downloadFailed', {
         type: 'downloadFailed',
         downloadId: download.id,
@@ -195,6 +252,45 @@ class TTSDownloadManager extends EventEmitter {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  /**
+   * Create SSML for batch synthesis
+   */
+  private createSSML(textElements: string[], voiceSettings: VoiceSettings): string {
+    const { voice, rate = 1.0, pitch = 1.0 } = voiceSettings;
+    
+    // Convert rate/pitch to SSML format
+    const ratePercent = `${Math.round(rate * 100)}%`;
+    const pitchValue = pitch > 1 
+      ? `+${Math.round((pitch - 1) * 50)}%` 
+      : `-${Math.round((1 - pitch) * 50)}%`;
+
+    // Build SSML with each element as a separate sentence
+    const sentences = textElements
+      .map(text => `<s>${this.escapeXml(text)}</s>`)
+      .join('\n');
+
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
+  <voice name="${voice}">
+    <prosody rate="${ratePercent}" pitch="${pitchValue}">
+      ${sentences}
+    </prosody>
+  </voice>
+</speak>`;
+  }
+
+  /**
+   * Escape XML special characters
+   */
+  private escapeXml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   /**
@@ -296,7 +392,8 @@ class TTSDownloadManager extends EventEmitter {
 
       // Create storage directory for this chapter
       const chapterDir = `${this.STORAGE_BASE_DIR}chapter_${download.chapterId}/`;
-      await FileSystem.makeDirectoryAsync(chapterDir, { intermediates: true });
+      const chapterDirectory = new Directory(chapterDir);
+      await chapterDirectory.create();
 
       // Download audio files
       const audioFiles = await azureBatchSynthesis.downloadResults(status, chapterDir);
@@ -304,9 +401,10 @@ class TTSDownloadManager extends EventEmitter {
       // Calculate total size
       let totalSizeMB = 0;
       for (const filePath of audioFiles) {
-        const fileInfo = await FileSystem.getInfoAsync(filePath);
-        if (fileInfo.exists && 'size' in fileInfo) {
-          totalSizeMB += fileInfo.size / (1024 * 1024);
+        const file = new File(filePath);
+        if (await file.exists()) {
+          const size = await file.size();
+          totalSizeMB += size / (1024 * 1024);
         }
       }
 
@@ -436,7 +534,10 @@ class TTSDownloadManager extends EventEmitter {
 
     // Delete local files if they exist
     if (download.storageDir) {
-      await FileSystem.deleteAsync(download.storageDir, { idempotent: true });
+      const dir = new Directory(download.storageDir);
+      if (await dir.exists()) {
+        await dir.delete();
+      }
     }
 
     console.log('[TTSDownloadManager] Download cancelled:', chapterId);
@@ -454,7 +555,10 @@ class TTSDownloadManager extends EventEmitter {
 
     // Delete local files
     if (download.storageDir) {
-      await FileSystem.deleteAsync(download.storageDir, { idempotent: true });
+      const dir = new Directory(download.storageDir);
+      if (await dir.exists()) {
+        await dir.delete();
+      }
     }
 
     // Delete from database
@@ -476,6 +580,15 @@ class TTSDownloadManager extends EventEmitter {
       pending: pending.length,
       processing: processing.length,
     });
+  }
+
+  /**
+   * Retry a failed download
+   */
+  async retryDownload(chapterId: number): Promise<void> {
+    await retryDownload(chapterId);
+    this.emitQueueChanged();
+    await this.processQueue();
   }
 
   /**

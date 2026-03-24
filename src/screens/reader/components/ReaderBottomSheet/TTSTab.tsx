@@ -22,7 +22,13 @@ import { extractChapterTextElements, estimateAudioSize, validateTextElements } f
 import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
 import { getTTSDownload } from '@database/queries/TTSDownloadQueries';
 import { showToast } from '@utils/showToast';
-import { useChapterContext } from '../../ChapterContext';
+import { ChapterInfo, NovelInfo } from '@database/types';
+
+interface TTSTabProps {
+  novel: NovelInfo;
+  chapter: ChapterInfo;
+  webViewRef: React.RefObject<WebView | null>;
+}
 
 interface VoicePickerModalProps {
   visible: boolean;
@@ -362,9 +368,8 @@ const MicrosoftVoicePickerModal: React.FC<MicrosoftVoicePickerModalProps> = ({
   );
 };
 
-const TTSTab: React.FC = () => {
+const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
   const theme = useTheme();
-  const { novel, chapter, webViewRef } = useChapterContext();
   
   const {
     TTSEnable = true,
@@ -534,7 +539,7 @@ const TTSTab: React.FC = () => {
     } finally {
       setIsDownloading(false);
     }
-  }, [webViewRef, downloadStatus, selectedEngine, isMicrosoftEnabled, tts, chapter.id, novel?.id]);
+  }, [webViewRef, downloadStatus, selectedEngine, isMicrosoftEnabled, tts, chapter.id, novel.id]);
 
   return (
     <>
@@ -678,12 +683,12 @@ const TTSTab: React.FC = () => {
               {/* Offline Download Section */}
               <View style={styles.downloadSection}>
                 <List.SubHeader theme={theme}>Offline Audio</List.SubHeader>
-                
-                <View style={[styles.downloadInfoContainer, { backgroundColor: theme.surfaceVariant }]}>
-                  <Text style={[styles.downloadInfoText, { color: theme.onSurfaceVariant }]}>
-                    Download chapter audio for offline playback using Azure Batch Synthesis (66% cost savings)
-                  </Text>
-                </View>
+                  
+                  <View style={[styles.downloadInfoContainer, { backgroundColor: theme.surfaceVariant }]}>
+                    <Text style={[styles.downloadInfoText, { color: theme.onSurfaceVariant }]}>
+                      Download chapter audio for offline playback using Azure Batch Synthesis (66% cost savings)
+                    </Text>
+                  </View>
                 
                 {downloadStatus === 'completed' && (
                   <View style={[styles.downloadStatusContainer, { backgroundColor: theme.surfaceVariant }]}>

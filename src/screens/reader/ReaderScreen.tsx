@@ -130,7 +130,12 @@ export const ChapterContent = ({
       ) : (
         <WebViewReader onPress={hideHeader} />
       )}
-      <ReaderBottomSheetV2 bottomSheetRef={readerSheetRef} />
+      <ReaderBottomSheetV2 
+        bottomSheetRef={readerSheetRef} 
+        novel={novel}
+        chapter={chapter}
+        webViewRef={webViewRef}
+      />
       {!hidden ? (
         <>
           <ReaderAppbar
