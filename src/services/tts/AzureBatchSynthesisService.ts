@@ -11,14 +11,13 @@
  * - Azure Blob Storage for input file hosting (AzureBlobStorage service)
  */
 
-import { azureBlobStorage } from './AzureBlobStorage';
-import { getMMKVString } from '@utils/mmkv/mmkv';
-import { INTEGRATION_SETTINGS } from '@utils/constants/storage.constants';
+import { getMMKVObject } from '@utils/mmkv/mmkv';
+import { INTEGRATION_SETTINGS } from '@hooks/persisted/useSettings';
 import { IntegrationSettings } from '@hooks/persisted/useSettings';
-import * as FileSystem from 'expo-file-system';
+import { File, Directory, Paths } from 'expo-file-system';
+import { unzip } from 'react-native-zip-archive';
 
-// Batch Synthesis API endpoint (v3.1-preview1)
-const API_VERSION = 'v3.1-preview1';
+const API_VERSION = '2024-04-01';
 
 export interface BatchSynthesisInput {
   text: string;
@@ -45,6 +44,13 @@ export interface BatchJobStatus {
   outputs?: {
     result?: string; // URL to download results
   };
+  properties?: {
+    error?: {
+      code: string;
+      message: string;
+    };
+    [key: string]: unknown;
+  };
   error?: {
     code: string;
     message: string;
@@ -60,19 +66,17 @@ export interface BatchJobResult {
 class AzureBatchSynthesisService {
   private subscriptionKey: string = '';
   private region: string = '';
-  private endpoint: string = '';
+  private baseEndpoint: string = '';
 
   /**
    * Initialize the service with Azure Speech credentials
    */
   initialize(): void {
     try {
-      const settingsJson = getMMKVString(INTEGRATION_SETTINGS);
-      if (!settingsJson) {
+      const settings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+      if (!settings) {
         throw new Error('Integration settings not found');
       }
-
-      const settings: IntegrationSettings = JSON.parse(settingsJson);
 
       if (!settings.microsoftSpeech?.enabled) {
         throw new Error('Microsoft Speech not enabled');
@@ -86,9 +90,9 @@ class AzureBatchSynthesisService {
 
       this.subscriptionKey = subscriptionKey;
       this.region = region;
-      this.endpoint = `https://${region}.api.cognitive.microsoft.com/speechtotext/${API_VERSION}/batchsynthesis`;
+      this.baseEndpoint = `https://${region}.api.cognitive.microsoft.com/texttospeech/batchsyntheses`;
 
-      console.log('[AzureBatchSynthesis] Initialized:', { region, endpoint: this.endpoint });
+      console.log('[AzureBatchSynthesis] Initialized:', { region, baseEndpoint: this.baseEndpoint });
     } catch (error) {
       console.error('[AzureBatchSynthesis] Initialization failed:', error);
       throw error;
@@ -99,7 +103,7 @@ class AzureBatchSynthesisService {
    * Check if service is ready
    */
   isReady(): boolean {
-    return !!this.subscriptionKey && !!this.region && !!this.endpoint;
+    return !!this.subscriptionKey && !!this.region && !!this.baseEndpoint;
   }
 
   /**
@@ -151,47 +155,36 @@ ${ssmlEntries}
       throw new Error('Azure Batch Synthesis not initialized');
     }
 
-    if (!azureBlobStorage.isReady()) {
-      throw new Error('Azure Blob Storage not initialized');
-    }
-
     try {
-      // 1. Create SSML document from inputs
+      // Build SSML and pass inline — 2024-04-01 API uses PUT with job ID in URL
       const texts = request.inputs.map((input) => input.text);
       const ssml = this.createSSMLDocument(texts, request.voiceSettings);
 
-      // 2. Upload SSML to blob storage
-      const filename = `chapter_${chapterId}_${Date.now()}.ssml`;
-      const uploadResult = await azureBlobStorage.uploadSSML(ssml, filename, false);
+      // Generate a unique job ID (UUID v4)
+      const jobId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
 
-      console.log('[AzureBatchSynthesis] Uploaded input file:', uploadResult);
-
-      // 3. Submit batch job
       const jobPayload = {
-        displayName: `LNReader_Chapter_${chapterId}`,
         description: `Batch synthesis for chapter ${chapterId}`,
-        textType: 'SSML',
+        inputKind: 'SSML',
         inputs: [
           {
-            url: uploadResult.url,
+            content: ssml,
           },
         ],
         properties: {
           outputFormat: request.outputFormat || 'audio-24khz-96kbitrate-mono-mp3',
           wordBoundaryEnabled: false,
           sentenceBoundaryEnabled: false,
-          concatenateResult: false, // Keep as separate files
+          concatenateResult: false,
           decompressOutputFiles: false,
-        },
-        customProperties: {
-          chapterId: chapterId.toString(),
-          inputFilename: filename,
-          elementCount: texts.length.toString(),
         },
       };
 
-      const response = await fetch(this.endpoint, {
-        method: 'POST',
+      const response = await fetch(`${this.baseEndpoint}/${jobId}?api-version=${API_VERSION}`, {
+        method: 'PUT',
         headers: {
           'Ocp-Apim-Subscription-Key': this.subscriptionKey,
           'Content-Type': 'application/json',
@@ -203,9 +196,6 @@ ${ssmlEntries}
         const errorText = await response.text();
         throw new Error(`Batch submission failed: ${response.status} - ${errorText}`);
       }
-
-      const result = await response.json();
-      const jobId = result.id;
 
       console.log('[AzureBatchSynthesis] Job submitted:', { jobId, chapterId, elementCount: texts.length });
 
@@ -229,7 +219,7 @@ ${ssmlEntries}
     }
 
     try {
-      const url = `${this.endpoint}/${jobId}`;
+      const url = `${this.baseEndpoint}/${jobId}?api-version=${API_VERSION}`;
 
       const response = await fetch(url, {
         method: 'GET',
@@ -301,44 +291,39 @@ ${ssmlEntries}
       throw new Error('Job completed but no result URL available');
     }
 
+    const tempZipFile = new File(Paths.cache, `batch_${jobStatus.id}.zip`);
+
     try {
-      // Download result manifest
-      const manifestUrl = jobStatus.outputs.result;
-      const manifestResponse = await fetch(manifestUrl);
-
-      if (!manifestResponse.ok) {
-        throw new Error(`Failed to download manifest: ${manifestResponse.status}`);
+      // Download the results ZIP
+      const response = await fetch(jobStatus.outputs.result);
+      if (!response.ok) {
+        throw new Error(`Failed to download results ZIP: ${response.status}`);
       }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      tempZipFile.write(bytes);
 
-      const manifest = await manifestResponse.json();
+      // Extract ZIP to chapter directory
+      const extractDir = downloadDir.replace(/\/$/, '');
+      await unzip(tempZipFile.uri, extractDir);
 
-      // Manifest contains URLs for all generated audio files
-      const audioFiles: string[] = [];
+      // List extracted audio files
+      const chapterDirectory = new Directory(downloadDir);
+      const entries = chapterDirectory.list();
+      const audioFiles = (entries as File[])
+        .filter(f => f.uri.endsWith('.mp3') || f.uri.endsWith('.wav'))
+        .sort((a, b) => a.uri.localeCompare(b.uri))
+        .map(f => f.uri);
 
-      if (manifest.values && Array.isArray(manifest.values)) {
-        for (const item of manifest.values) {
-          if (item.url && item.url.endsWith('.mp3')) {
-            const filename = item.url.split('/').pop() || `audio_${Date.now()}.mp3`;
-            const localPath = `${downloadDir}/${filename}`;
-
-            // Download audio file
-            const downloadResult = await FileSystem.downloadAsync(item.url, localPath);
-
-            if (downloadResult.status === 200) {
-              audioFiles.push(downloadResult.uri);
-              console.log('[AzureBatchSynthesis] Downloaded:', filename);
-            } else {
-              console.warn('[AzureBatchSynthesis] Download failed:', filename, downloadResult.status);
-            }
-          }
-        }
-      }
-
-      console.log(`[AzureBatchSynthesis] Downloaded ${audioFiles.length} audio files`);
+      console.log(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files`);
       return audioFiles;
     } catch (error) {
       console.error('[AzureBatchSynthesis] Download failed:', error);
       throw error;
+    } finally {
+      // Clean up temp ZIP regardless of success/failure
+      if (tempZipFile.exists) {
+        tempZipFile.delete();
+      }
     }
   }
 
@@ -353,7 +338,7 @@ ${ssmlEntries}
     }
 
     try {
-      const url = `${this.endpoint}/${jobId}`;
+      const url = `${this.baseEndpoint}/${jobId}?api-version=${API_VERSION}`;
 
       const response = await fetch(url, {
         method: 'DELETE',
@@ -385,7 +370,7 @@ ${ssmlEntries}
     }
 
     try {
-      const response = await fetch(this.endpoint, {
+      const response = await fetch(`${this.baseEndpoint}?api-version=${API_VERSION}`, {
         method: 'GET',
         headers: {
           'Ocp-Apim-Subscription-Key': this.subscriptionKey,

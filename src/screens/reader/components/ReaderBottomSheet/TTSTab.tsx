@@ -406,8 +406,30 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
         console.error('[TTSTab] Failed to check download status:', error);
       }
     };
-    
+
     checkDownloadStatus();
+
+    const onCompleted = (event: { chapterId: number }) => {
+      if (event.chapterId === chapter.id) {
+        setDownloadStatus('completed');
+        setIsDownloading(false);
+      }
+    };
+    const onFailed = (event: { chapterId: number; error: string }) => {
+      if (event.chapterId === chapter.id) {
+        setDownloadStatus('failed');
+        setIsDownloading(false);
+        showToast(`Download failed: ${event.error}`);
+      }
+    };
+
+    ttsDownloadManager.on('downloadCompleted', onCompleted);
+    ttsDownloadManager.on('downloadFailed', onFailed);
+
+    return () => {
+      ttsDownloadManager.off('downloadCompleted', onCompleted);
+      ttsDownloadManager.off('downloadFailed', onFailed);
+    };
   }, [chapter.id]);
 
   // Load Expo voices
@@ -497,29 +519,24 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
       //  Estimate size
       const estimatedMB = estimateAudioSize(result.elements);
       
-      // Get voice settings based on selected engine
-      let voiceName = '';
-      if (selectedEngine === 'microsoft') {
-        if (!isMicrosoftEnabled) {
-          showToast('Microsoft Speech not configured. Please set up in Settings > Integrations.');
-          setIsDownloading(false);
-          return;
-        }
-        voiceName = tts?.microsoftVoice?.shortName || '';
-        if (!voiceName) {
-          showToast('Please select a Microsoft voice first');
-          setIsDownloading(false);
-          return;
-        }
-      } else {
-        voiceName = tts?.voice?.identifier || 'System';
+      // Azure Batch Synthesis requires a Microsoft voice regardless of selected engine
+      if (!isMicrosoftEnabled) {
+        showToast('Microsoft Speech not configured. Please set up in Settings > Integrations.');
+        setIsDownloading(false);
+        return;
+      }
+      const voiceName = tts?.microsoftVoice?.shortName || '';
+      if (!voiceName) {
+        showToast('Please select a Microsoft voice first');
+        setIsDownloading(false);
+        return;
       }
       
       const voiceSettings = {
         voice: voiceName,
         rate: tts?.rate || 1.0,
         pitch: tts?.pitch || 1.0,
-        engine: selectedEngine,
+        engine: 'microsoft' as const,
       };
       
       // Request download

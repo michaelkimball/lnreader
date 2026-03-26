@@ -25,6 +25,10 @@ const customConfig = {
   resolver: {
     unstable_enableSymlinks: true,
     sourceExts: [...defaultConfig.resolver.sourceExts, 'sql'],
+    extraNodeModules: {
+      buffer: path.resolve(__dirname, 'node_modules/.pnpm/buffer@6.0.3/node_modules/buffer'),
+      'node-forge': path.resolve(__dirname, 'node_modules/.pnpm/node-forge@1.3.3/node_modules/node-forge'),
+    },
   },
   server: {
     port: 8081,

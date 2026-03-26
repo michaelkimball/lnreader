@@ -183,17 +183,6 @@ class TTSAudioPreloader extends EventEmitter {
     console.log('[TTSAudioPreloader] Generating', priorityItems.length, 'priority items');
     
     await this.generateBatch(priorityItems, 2);  // Low concurrency for priority
-    
-    // Emit 'ready' event after first element is ready
-    const firstReady = this.queue.find(item => item.status === 'ready');
-    if (firstReady) {
-      console.log('[TTSAudioPreloader] First element ready at index', firstReady.index, 'URI:', firstReady.uri);
-      console.log('[TTSAudioPreloader] Emitting ready event now...');
-      this.emit('ready', { type: 'ready', index: firstReady.index, uri: firstReady.uri! });
-      console.log('[TTSAudioPreloader] Ready event emitted');
-    } else {
-      console.warn('[TTSAudioPreloader] No ready items after priority generation');
-    }
   }
 
   /**
@@ -258,6 +247,9 @@ class TTSAudioPreloader extends EventEmitter {
         } else {
           this.stats.generated++;
         }
+
+        // Emit ready event for each item as it becomes available
+        this.emit('ready', { type: 'ready', index: item.index, uri: item.uri! });
 
         return;  // Success, exit retry loop
       } catch (error) {

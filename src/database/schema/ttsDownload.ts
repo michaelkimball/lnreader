@@ -21,6 +21,7 @@ export const ttsDownload = sqliteTable(
     
     // Batch job tracking
     batchJobId: text('batchJobId'), // Azure Batch Synthesis job ID
+    inputBlobFilename: text('inputBlobFilename'), // Azure Blob file to clean up
     status: text('status').notNull().default('pending'), // pending, processing, completed, failed
     
     // Progress tracking
@@ -48,9 +49,6 @@ export const ttsDownload = sqliteTable(
     // Error handling
     errorMessage: text('errorMessage'), // Error message if failed
     retryCount: integer('retryCount').default(0), // Number of retry attempts
-    
-    // Cleanup tracking
-    inputBlobFilename: text('inputBlobFilename'), // Azure Blob file to clean up
   },
   table => [
     // Ensure one download per chapter

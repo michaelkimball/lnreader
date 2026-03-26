@@ -93,11 +93,12 @@ class TTSPlaybackManager extends EventEmitter {
         // Auto-start playback if we're loading first element
         console.log('[TTSPlaybackManager] Checking condition: state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex);
         
-        if (this.state === 'loading' && event.index === this.currentIndex) {
-          console.log('[TTSPlaybackManager] Auto-starting playback for first element');
+        const currentIndexReady = this.preloader.isAudioReady(this.currentIndex);
+        if (this.state === 'loading' && (event.index === this.currentIndex || currentIndexReady)) {
+          console.log('[TTSPlaybackManager] Auto-starting playback for index', this.currentIndex, '(triggered by ready event for index', event.index, ')');
           this.playCurrentElement();
         } else {
-          console.log('[TTSPlaybackManager] NOT auto-starting. Condition failed.');
+          console.log('[TTSPlaybackManager] NOT auto-starting. state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex, 'currentIndexReady=', currentIndexReady);
         }
       }
     });

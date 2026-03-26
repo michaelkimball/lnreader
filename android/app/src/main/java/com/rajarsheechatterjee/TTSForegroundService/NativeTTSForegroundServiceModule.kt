@@ -9,7 +9,6 @@ class NativeTTSForegroundServiceModule(private val appContext: ReactApplicationC
     NativeTTSForegroundServiceSpec(appContext) {
 
     init {
-        // Store context in service for event emission
         TTSForegroundService.reactContext = appContext
     }
 
@@ -39,13 +38,22 @@ class NativeTTSForegroundServiceModule(private val appContext: ReactApplicationC
 
     @ReactMethod
     override fun updateMetadata(title: String, subtitle: String, coverUri: String) {
-       // Not implemented - would require service binding
-       // For now, metadata updates via startService()
+        if (!TTSForegroundService.isServiceRunning) return
+        val intent = Intent(appContext, TTSForegroundService::class.java).apply {
+            putExtra(TTSForegroundService.EXTRA_TITLE, title)
+            putExtra(TTSForegroundService.EXTRA_SUBTITLE, subtitle)
+            putExtra(TTSForegroundService.EXTRA_COVER_URI, coverUri)
+        }
+        appContext.startService(intent)
     }
 
     @ReactMethod
     override fun updatePlaybackState(isPlaying: Boolean) {
-        // Not implemented - would require service binding
+        if (!TTSForegroundService.isServiceRunning) return
+        val intent = Intent(appContext, TTSForegroundService::class.java).apply {
+            putExtra(TTSForegroundService.EXTRA_IS_PLAYING, isPlaying)
+        }
+        appContext.startService(intent)
     }
 
     @ReactMethod(isBlockingSynchronousMethod = true)
@@ -54,12 +62,8 @@ class NativeTTSForegroundServiceModule(private val appContext: ReactApplicationC
     }
 
     @ReactMethod
-    override fun addListener(eventName: String) {
-        // Required for EventEmitter, no-op
-    }
+    override fun addListener(eventName: String) {}
 
     @ReactMethod
-    override fun removeListeners(count: Double) {
-        // Required for EventEmitter, no-op
-    }
+    override fun removeListeners(count: Double) {}
 }

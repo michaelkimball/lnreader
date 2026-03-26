@@ -193,12 +193,19 @@ export const markDownloadFailed = async (
  */
 export const retryDownload = async (downloadId: number): Promise<void> => {
   await dbManager.write(async tx => {
+    const download = tx
+      .select({ retryCount: ttsDownloadSchema.retryCount })
+      .from(ttsDownloadSchema)
+      .where(eq(ttsDownloadSchema.id, downloadId))
+      .get();
+
     tx.update(ttsDownloadSchema)
       .set({
         status: 'pending',
         errorMessage: null,
         batchJobId: null,
         inputBlobFilename: null,
+        retryCount: (download?.retryCount || 0) + 1,
       })
       .where(eq(ttsDownloadSchema.id, downloadId))
       .run();
@@ -313,6 +320,18 @@ export const getPendingDownloads = async (): Promise<TTSDownloadRow[]> => {
  */
 export const getProcessingDownloads = async (): Promise<TTSDownloadRow[]> => {
   return getTTSDownloadsByStatus('processing');
+};
+
+/**
+ * Reset a single download back to pending (for stale processing recovery).
+ */
+export const resetDownloadToPending = async (downloadId: number): Promise<void> => {
+  await dbManager.write(async tx => {
+    tx.update(ttsDownloadSchema)
+      .set({ status: 'pending', batchJobId: null })
+      .where(eq(ttsDownloadSchema.id, downloadId))
+      .run();
+  });
 };
 
 /**

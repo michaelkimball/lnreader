@@ -339,11 +339,12 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       if (event.type === 'stateChange' && event.state) {
         const isPlaying = event.state === 'playing';
         const isLoading = event.state === 'loading';
+        const isPaused = event.state === 'paused';
         isTTSReadingRef.current = isPlaying || isLoading;
-        
+
         updateTTSPlaybackState(isPlaying);
-        
-        if (isPlaying || isLoading) {
+
+        if (isPlaying || isLoading || isPaused) {
           updateTTSNotification({
             novelName: novel?.name || 'Unknown',
             chapterName: chapter.name,
@@ -620,9 +621,15 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
                 return;
               }
               
-              // If PlaybackManager already initialized with full queue, don't call play() again
+              // If PlaybackManager already initialized with full queue, handle resume or ignore
               if (ttsFullQueueInitializedRef.current) {
-                console.log('[WebViewReader] Ignoring speak event - full queue already initialized, playing via preloader');
+                // If paused, resume playback
+                if (ttsPlaybackManager.isPaused()) {
+                  console.log('[WebViewReader] Full queue initialized and paused - resuming');
+                  ttsPlaybackManager.resume();
+                } else {
+                  console.log('[WebViewReader] Ignoring speak event - full queue already initialized, playing via preloader');
+                }
                 // Just update notification
                 updateTTSNotification({
                   novelName: novel?.name || 'Unknown',
@@ -705,8 +712,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             }
             break;
           case 'pause-speak':
-            // WebView already paused itself, just clean up React Native side
-            ttsPlaybackManager.stop(true); // fromPlay=true to skip queueEnd emission
+            // WebView already paused itself, mirror that on the React Native side
+            ttsPlaybackManager.pause();
             break;
           case 'stop-speak':
             // WebView already stopped itself, just clean up React Native side

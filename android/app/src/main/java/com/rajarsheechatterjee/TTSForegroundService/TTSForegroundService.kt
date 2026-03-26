@@ -11,6 +11,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.support.v4.media.session.MediaSessionCompat
+import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.WritableMap
@@ -26,12 +29,12 @@ class TTSForegroundService : Service() {
         const val ACTION_PLAY = "com.lnreader.TTS_SERVICE_PLAY"
         const val ACTION_PAUSE = "com.lnreader.TTS_SERVICE_PAUSE"
         const val ACTION_STOP = "com.lnreader.TTS_SERVICE_STOP"
-        
+
         const val EXTRA_TITLE = "title"
         const val EXTRA_SUBTITLE = "subtitle"
         const val EXTRA_COVER_URI = "coverUri"
         const val EXTRA_IS_PLAYING = "isPlaying"
-        
+
         var isServiceRunning = false
         var reactContext: ReactApplicationContext? = null
     }
@@ -42,16 +45,21 @@ class TTSForegroundService : Service() {
     private var isPlaying: Boolean = false
     private var receiverRegistered = false
 
+    private var mediaSession: MediaSessionCompat? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
     private val mediaReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
                 ACTION_PLAY -> {
                     isPlaying = true
+                    updatePlaybackState()
                     updateNotification()
                     sendEventToReactNative("TTSServicePlay", null)
                 }
                 ACTION_PAUSE -> {
                     isPlaying = false
+                    updatePlaybackState()
                     updateNotification()
                     sendEventToReactNative("TTSServicePause", null)
                 }
@@ -67,35 +75,100 @@ class TTSForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        initMediaSession()
+        acquireWakeLock()
         registerReceiver()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         isServiceRunning = true
-        
-        // Extract metadata from intent
+
         intent?.let {
             currentTitle = it.getStringExtra(EXTRA_TITLE) ?: currentTitle
             currentSubtitle = it.getStringExtra(EXTRA_SUBTITLE) ?: currentSubtitle
             currentCoverUri = it.getStringExtra(EXTRA_COVER_URI) ?: currentCoverUri
             isPlaying = it.getBooleanExtra(EXTRA_IS_PLAYING, false)
         }
-        
-        // Start foreground service with notification
+
+        updatePlaybackState()
+
         val notification = createNotification()
         startForeground(NOTIFICATION_ID, notification)
-        
-        return START_STICKY  // Restart service if killed by system
+
+        return START_STICKY
     }
 
     override fun onDestroy() {
         isServiceRunning = false
+        releaseWakeLock()
+        mediaSession?.release()
+        mediaSession = null
         unregisterReceiver()
         super.onDestroy()
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null  // Not binding to service
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun initMediaSession() {
+        mediaSession = MediaSessionCompat(this, "TTSForegroundService").apply {
+            setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlay() {
+                    isPlaying = true
+                    updatePlaybackState()
+                    updateNotification()
+                    sendEventToReactNative("TTSServicePlay", null)
+                }
+                override fun onPause() {
+                    isPlaying = false
+                    updatePlaybackState()
+                    updateNotification()
+                    sendEventToReactNative("TTSServicePause", null)
+                }
+                override fun onStop() {
+                    sendEventToReactNative("TTSServiceStop", null)
+                    stopForeground(true)
+                    stopSelf()
+                }
+            })
+            setFlags(
+                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+            )
+            isActive = true
+        }
+        updatePlaybackState()
+    }
+
+    private fun updatePlaybackState() {
+        val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        mediaSession?.setPlaybackState(
+            PlaybackStateCompat.Builder()
+                .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+                .setActions(
+                    PlaybackStateCompat.ACTION_PLAY or
+                    PlaybackStateCompat.ACTION_PAUSE or
+                    PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                    PlaybackStateCompat.ACTION_STOP
+                )
+                .build()
+        )
+    }
+
+    private fun acquireWakeLock() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "LNReader:TTSWakeLock"
+        ).apply {
+            acquire(4 * 60 * 60 * 1000L) // 4 hours max
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wakeLock = null
     }
 
     private fun ensureNotificationChannel() {
@@ -109,14 +182,12 @@ class TTSForegroundService : Service() {
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
-            
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
         }
     }
 
     private fun createNotification(): Notification {
-        // Intent to open app when notification is tapped
         val openAppIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -124,27 +195,25 @@ class TTSForegroundService : Service() {
             this, 0, openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        
-        // Play/Pause action
+
         val playPauseIntent = Intent(if (isPlaying) ACTION_PAUSE else ACTION_PLAY)
         val playPausePendingIntent = PendingIntent.getBroadcast(
             this, 1, playPauseIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        
-        // Stop action
+
         val stopIntent = Intent(ACTION_STOP)
         val stopPendingIntent = PendingIntent.getBroadcast(
             this, 2, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_media_play)  // Using built-in icon for now
+            .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(currentTitle)
             .setContentText(currentSubtitle)
             .setContentIntent(openAppPendingIntent)
-            .setOngoing(true)  // Cannot be dismissed while service is running
+            .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(
                 if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
@@ -152,8 +221,11 @@ class TTSForegroundService : Service() {
                 playPausePendingIntent
             )
             .addAction(android.R.drawable.ic_delete, "Stop", stopPendingIntent)
-            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
-                .setShowActionsInCompactView(0, 1))
+            .setStyle(
+                androidx.media.app.NotificationCompat.MediaStyle()
+                    .setMediaSession(mediaSession?.sessionToken)  // MediaSessionCompat.Token
+                    .setShowActionsInCompactView(0, 1)
+            )
             .build()
     }
 
@@ -173,6 +245,7 @@ class TTSForegroundService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(mediaReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
                 registerReceiver(mediaReceiver, filter)
             }
             receiverRegistered = true

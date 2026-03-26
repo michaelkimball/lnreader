@@ -1,4 +1,6 @@
 import 'react-native-gesture-handler';
+import { Buffer } from 'buffer';
+global.Buffer = Buffer;
 import { registerRootComponent } from 'expo';
 import { I18nManager } from 'react-native';
 import { i18n } from './strings/translations';
