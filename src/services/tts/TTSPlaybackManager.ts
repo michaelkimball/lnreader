@@ -225,9 +225,9 @@ class TTSPlaybackManager extends EventEmitter {
   ): Promise<void> {
     console.log('[TTSPlaybackManager] playFromOfflineFiles() called with', audioFilePaths.length, 'files');
     
-    // Prevent re-entrant calls
-    if (this.state === 'loading' || this.state === 'playing') {
-      console.log('[TTSPlaybackManager] Already in state:', this.state, '- ignoring playFromOfflineFiles() call');
+    // Prevent re-entrant calls when already playing (loading is OK — play() sets it before calling us)
+    if (this.state === 'playing') {
+      console.log('[TTSPlaybackManager] Already playing - ignoring playFromOfflineFiles() call');
       return;
     }
     
