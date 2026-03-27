@@ -14,7 +14,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import TTSAudioPreloader, { TTSQueueItem } from './TTSAudioPreloader';
 import { VoiceSettings } from './TTSAudioGenerator';
 import NativeTTSForegroundService from '@specs/NativeTTSForegroundService';
-import { getAudioFilePaths, hasCompletedDownload, getElementOffsets } from '@database/queries/TTSDownloadQueries';
+import { getAudioFilePaths, hasCompletedDownload, getElementOffsets, getTTSDownload } from '@database/queries/TTSDownloadQueries';
 
 export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'stopped';
 
@@ -242,17 +242,21 @@ class TTSPlaybackManager extends EventEmitter {
       }
 
       // Set state and offline mode flag
-      console.log('[TTSPlaybackManager] Setting state to loading for offline playback, index to', startIndex);
+      // currentIndex always refers to the audio file index (0 for single-file offline mode).
+      // startIndex is the text element to begin at — used for seeking and offset initialisation.
+      console.log('[TTSPlaybackManager] Setting state to loading for offline playback, startIndex:', startIndex);
       this.setState('loading');
-      this.currentIndex = startIndex;
+      this.currentIndex = 0;
       this.chapterId = chapterId;
       this.novelId = novelId;
       this.isOfflineMode = true;
 
       // Load element timing offsets for position-based element tracking
       this.elementOffsets = [];
-      this.lastEmittedElementIndex = -1;
+      this.lastEmittedElementIndex = startIndex - 1; // so the first emitted change is the right element
       try {
+        const download = await getTTSDownload(chapterId);
+        console.log('[TTSPlaybackManager] Offline download voice settings - rate:', download?.voiceRate, 'pitch:', download?.voicePitch, 'voice:', download?.voiceName);
         const offsets = await getElementOffsets(chapterId);
         if (offsets && offsets.length > 0) {
           this.elementOffsets = offsets;
@@ -284,7 +288,8 @@ class TTSPlaybackManager extends EventEmitter {
       this.emitProgress();
 
       // Start playing immediately (no need to wait for preloader)
-      await this.playCurrentElementOffline();
+      // Pass startIndex so we can seek into the audio if resuming mid-chapter
+      await this.playCurrentElementOffline(startIndex);
 
     } catch (error) {
       console.error('[TTSPlaybackManager] Error in playFromOfflineFiles():', error);
@@ -297,8 +302,8 @@ class TTSPlaybackManager extends EventEmitter {
    * Play current element from offline files (internal method)
    * Similar to playCurrentElement() but uses URIs directly from queue
    */
-  private async playCurrentElementOffline(): Promise<void> {
-    console.log('[TTSPlaybackManager] playCurrentElementOffline() called, currentIndex:', this.currentIndex);
+  private async playCurrentElementOffline(startElementIndex: number = 0): Promise<void> {
+    console.log('[TTSPlaybackManager] playCurrentElementOffline() called, currentIndex:', this.currentIndex, 'startElementIndex:', startElementIndex);
     try {
       const item = this.queue[this.currentIndex];
       if (!item || !item.uri) {
@@ -310,27 +315,33 @@ class TTSPlaybackManager extends EventEmitter {
       const uri = item.uri;
       console.log('[TTSPlaybackManager] Playing offline URI:', uri);
 
+      // Determine seek position from element offsets
+      const seekPositionMs = startElementIndex > 0 && this.elementOffsets.length > startElementIndex
+        ? this.elementOffsets[startElementIndex]
+        : 0;
+
       // Unload previous sound
       if (this.currentSound) {
         await this.currentSound.unloadAsync();
         this.currentSound = null;
       }
 
-      // Load and play from local file
+      // Load and play from local file, seeking to start position if resuming
       const { sound } = await Audio.Sound.createAsync(
         { uri },
-        { shouldPlay: true },
+        { shouldPlay: true, positionMillis: seekPositionMs },
         this.onPlaybackStatusUpdate.bind(this)
       );
 
-      console.log('[TTSPlaybackManager] Offline sound created and playing!');
+      console.log('[TTSPlaybackManager] Offline sound created and playing! seekMs:', seekPositionMs);
       this.currentSound = sound;
       this.setState('playing');
 
-      // Update UI
+      // Update UI — emit the text element we're actually starting at
+      const displayIndex = startElementIndex > 0 ? startElementIndex : this.currentIndex;
       this.emit('elementChange', {
         type: 'elementChange',
-        index: this.currentIndex,
+        index: displayIndex,
         text: item.text,
       });
       this.emitProgress();

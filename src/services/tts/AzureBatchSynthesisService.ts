@@ -63,18 +63,12 @@ export interface BatchJobResult {
   duration?: number; // Audio duration in seconds
 }
 
-// Azure batch synthesis JSON can emit boundaries in two shapes:
-// Flat:   { AudioOffset, BoundaryType: "SentenceBoundary", Text }
-// Nested: { AudioOffset, Duration, text: { BoundaryType: "SentenceBoundary", Text } }
+// Azure batch synthesis *.sentence.json entries: { AudioOffset (ms), Duration (ms), Text }
+// No BoundaryType field — the file is sentence-only by name.
 export interface SentenceBoundary {
-  AudioOffset: number; // 100-nanosecond ticks
-  Duration?: number;
-  BoundaryType?: string;          // flat format
-  Text?: string;                  // flat format
-  text?: {                        // nested format
-    BoundaryType: string;
-    Text?: string;
-  };
+  AudioOffset: number; // milliseconds
+  Duration?: number;   // milliseconds
+  Text?: string;
 }
 
 export interface DownloadResults {
@@ -132,8 +126,9 @@ class AzureBatchSynthesisService {
   private createSSMLDocument(texts: string[], voiceSettings: VoiceSettings): string {
     const { voice, rate = 1.0, pitch = 1.0 } = voiceSettings;
 
-    const rateValue = `${Math.round(rate * 100)}%`;
-    const pitchValue = pitch >= 1.0 ? `+${Math.round((pitch - 1) * 50)}%` : `-${Math.round((1 - pitch) * 50)}%`;
+    // Use decimal format matching MicrosoftSpeechService online SSML (rate="1.0" not "100%")
+    const rateValue = `${rate}`;
+    const pitchValue = `${(pitch - 1) * 50}%`;
 
     const ssmlEntries = texts.map((text) => {
       const sanitizedText = text

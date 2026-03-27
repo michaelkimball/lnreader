@@ -471,11 +471,8 @@ class TTSDownloadManager extends EventEmitter {
     boundaries: SentenceBoundary[],
     textElements: string[]
   ): number[] {
-    // Azure batch synthesis uses "SentenceBoundary" (flat) or nested text.BoundaryType
-    const sentenceBoundaries = boundaries.filter(b => {
-      const type = b.BoundaryType ?? b.text?.BoundaryType ?? '';
-      return type === 'SentenceBoundary' || type === 'Sentence';
-    });
+    // *.sentence.json contains only sentence entries — no BoundaryType filtering needed
+    const sentenceBoundaries = boundaries;
     if (sentenceBoundaries.length === 0) return [];
 
     const offsets: number[] = [];
@@ -483,7 +480,8 @@ class TTSDownloadManager extends EventEmitter {
 
     for (const text of textElements) {
       const boundary = sentenceBoundaries[boundaryIdx];
-      offsets.push(boundary ? Math.round(boundary.AudioOffset / 10000) : (offsets[offsets.length - 1] ?? 0));
+      // Batch synthesis JSON AudioOffset is already in milliseconds (not 100-ns ticks like real-time TTS SDK)
+      offsets.push(boundary ? boundary.AudioOffset : (offsets[offsets.length - 1] ?? 0));
       // Count sentences in this element to advance to next element's first boundary
       const sentenceCount = Math.max(1, (text.match(/[.!?]+(?:\s|$)/g) || []).length);
       boundaryIdx += sentenceCount;
