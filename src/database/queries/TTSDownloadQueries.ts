@@ -14,6 +14,7 @@ import {
   sql,
   or,
 } from 'drizzle-orm';
+import { Directory } from 'expo-file-system';
 import { dbManager } from '@database/db';
 import { ttsDownloadSchema } from '@database/schema';
 import type { TTSDownloadRow, TTSDownloadInsert } from '@database/schema';
@@ -461,6 +462,41 @@ export const getElementOffsets = async (chapterId: number): Promise<number[] | n
   } catch {
     return null;
   }
+};
+
+/**
+ * Delete TTS downloads for the given chapter IDs, including local audio files.
+ * Safe to call with IDs that have no TTS download — they are silently skipped.
+ */
+export const deleteTTSDownloadsWithFiles = async (chapterIds: number[]): Promise<void> => {
+  if (!chapterIds.length) return;
+
+  const rows = await dbManager
+    .select()
+    .from(ttsDownloadSchema)
+    .where(inArray(ttsDownloadSchema.chapterId, chapterIds))
+    .all();
+
+  if (!rows.length) return;
+
+  rows.forEach(row => {
+    if (row.storageDir) {
+      try {
+        const dir = new Directory(row.storageDir);
+        if (dir.exists) {
+          dir.delete();
+        }
+      } catch {
+        // Best-effort file cleanup — don't block DB deletion
+      }
+    }
+  });
+
+  await dbManager.write(async tx => {
+    tx.delete(ttsDownloadSchema)
+      .where(inArray(ttsDownloadSchema.chapterId, chapterIds))
+      .run();
+  });
 };
 
 // #endregion

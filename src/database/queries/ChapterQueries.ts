@@ -26,6 +26,7 @@ import NativeFile from '@specs/NativeFile';
 import { ChapterFilterKey, ChapterOrderKey } from '@database/constants';
 import { chapterFilterToSQL, chapterOrderToSQL } from '@database/utils/parser';
 import { castInt } from '@database/manager/manager';
+import { deleteTTSDownloadsWithFiles } from '@database/queries/TTSDownloadQueries';
 
 // #region Mutations
 
@@ -217,6 +218,7 @@ export const deleteReadChaptersFromDb = async (): Promise<void> => {
         .where(inArray(chapterSchema.id, chapterIds))
         .run();
     });
+    await deleteTTSDownloadsWithFiles(chapterIds);
   }
   showToast(getString('novelScreen.readChaptersDeleted'));
 };
