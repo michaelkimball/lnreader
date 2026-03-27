@@ -21,6 +21,7 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
   const [subscriptionKey, setSubscriptionKey] = useState(microsoftSpeech?.subscriptionKey || '');
   const [region, setRegion] = useState(microsoftSpeech?.region || '');
   const [isEnabled, setIsEnabled] = useState(microsoftSpeech?.enabled || false);
+  const [autoDownloadTTS, setAutoDownloadTTS] = useState(microsoftSpeech?.autoDownloadOnChapterDownload || false);
   const [isValidating, setIsValidating] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
 
@@ -37,6 +38,7 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
         subscriptionKey,
         region,
         enabled: isEnabled,
+        autoDownloadOnChapterDownload: autoDownloadTTS,
       },
       azureBlobStorage: {
         accountName: blobAccountName,
@@ -69,6 +71,7 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
             subscriptionKey,
             region,
             enabled: true,
+            autoDownloadOnChapterDownload: autoDownloadTTS,
           },
         });
         setIsEnabled(true);
@@ -87,11 +90,13 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
     setSubscriptionKey('');
     setRegion('');
     setIsEnabled(false);
+    setAutoDownloadTTS(false);
     setIntegrationSettings({
       microsoftSpeech: {
         subscriptionKey: '',
         region: '',
         enabled: false,
+        autoDownloadOnChapterDownload: false,
       },
     });
     showToast('Microsoft Speech settings reset');
@@ -131,9 +136,44 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
                         subscriptionKey,
                         region,
                         enabled: false,
+                        autoDownloadOnChapterDownload: autoDownloadTTS,
                       },
                     });
                   }
+                }}
+                theme={theme}
+              />
+            }
+          />
+          <List.Item
+            title="Auto-download TTS on chapter download"
+            description="Automatically queue TTS audio when downloading a chapter"
+            theme={theme}
+            onPress={() => {
+              const next = !autoDownloadTTS;
+              setAutoDownloadTTS(next);
+              setIntegrationSettings({
+                microsoftSpeech: {
+                  subscriptionKey,
+                  region,
+                  enabled: isEnabled,
+                  autoDownloadOnChapterDownload: next,
+                },
+              });
+            }}
+            rightIcon={
+              <Switch
+                value={autoDownloadTTS}
+                onValueChange={(value) => {
+                  setAutoDownloadTTS(value);
+                  setIntegrationSettings({
+                    microsoftSpeech: {
+                      subscriptionKey,
+                      region,
+                      enabled: isEnabled,
+                      autoDownloadOnChapterDownload: value,
+                    },
+                  });
                 }}
                 theme={theme}
               />
