@@ -14,7 +14,7 @@ import { Audio, AVPlaybackStatus } from 'expo-av';
 import TTSAudioPreloader, { TTSQueueItem } from './TTSAudioPreloader';
 import { VoiceSettings } from './TTSAudioGenerator';
 import NativeTTSForegroundService from '@specs/NativeTTSForegroundService';
-import { getAudioFilePaths, hasCompletedDownload } from '@database/queries/TTSDownloadQueries';
+import { getAudioFilePaths, hasCompletedDownload, getElementOffsets } from '@database/queries/TTSDownloadQueries';
 
 export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'stopped';
 
@@ -46,6 +46,8 @@ class TTSPlaybackManager extends EventEmitter {
   private idleTimer: NodeJS.Timeout | null = null;
   private isStopping: boolean = false;
   private isOfflineMode: boolean = false; // Track if playing from offline files
+  private elementOffsets: number[] = []; // ms start time of each text element (offline mode)
+  private lastEmittedElementIndex: number = -1;
 
   private constructor() {
     super();
@@ -174,13 +176,9 @@ class TTSPlaybackManager extends EventEmitter {
       const hasOfflineAudio = await hasCompletedDownload(chapterId);
       if (hasOfflineAudio) {
         const audioFiles = await getAudioFilePaths(chapterId);
-        if (audioFiles && audioFiles.length === textElements.length) {
-          // Play from local files instead of generating
+        if (audioFiles && audioFiles.length > 0) {
           console.log('[TTSPlaybackManager] Playing from offline files:', audioFiles.length, 'files');
           return this.playFromOfflineFiles(audioFiles, startIndex, chapterId, novelId, textElements);
-        } else if (audioFiles) {
-          console.log('[TTSPlaybackManager] Audio files mismatch - expected:', textElements.length, 'got:', audioFiles.length);
-          // Fall through to normal playback
         }
       }
 
@@ -250,6 +248,19 @@ class TTSPlaybackManager extends EventEmitter {
       this.chapterId = chapterId;
       this.novelId = novelId;
       this.isOfflineMode = true;
+
+      // Load element timing offsets for position-based element tracking
+      this.elementOffsets = [];
+      this.lastEmittedElementIndex = -1;
+      try {
+        const offsets = await getElementOffsets(chapterId);
+        if (offsets && offsets.length > 0) {
+          this.elementOffsets = offsets;
+          console.log('[TTSPlaybackManager] Loaded', offsets.length, 'element offsets for position tracking');
+        }
+      } catch (e) {
+        console.warn('[TTSPlaybackManager] Failed to load element offsets:', e);
+      }
 
       // Start foreground service
       NativeTTSForegroundService.startService(
@@ -433,6 +444,8 @@ class TTSPlaybackManager extends EventEmitter {
       this.currentIndex = -1;
       this.queue = [];
       this.isOfflineMode = false;
+      this.elementOffsets = [];
+      this.lastEmittedElementIndex = -1;
       
       // Only emit queueEnd if this is a real stop (not from play())
       // Otherwise it triggers WebView tts.stop() which resets the WebView's queue
@@ -640,6 +653,26 @@ class TTSPlaybackManager extends EventEmitter {
       durationMillis: status.durationMillis,
       didJustFinish: status.didJustFinish,
     });
+
+    // Drive element highlighting from audio position in offline single-file mode
+    if (status.isLoaded && this.isOfflineMode && this.elementOffsets.length > 0) {
+      const posMs = status.positionMillis ?? 0;
+      let elementIndex = 0;
+      for (let i = this.elementOffsets.length - 1; i >= 0; i--) {
+        if (posMs >= this.elementOffsets[i]) {
+          elementIndex = i;
+          break;
+        }
+      }
+      if (elementIndex !== this.lastEmittedElementIndex) {
+        this.lastEmittedElementIndex = elementIndex;
+        this.emit('elementChange', {
+          type: 'elementChange',
+          index: elementIndex,
+          text: this.queue[0]?.text || '',
+        });
+      }
+    }
 
     if (status.didJustFinish) {
       console.log('==================================================');

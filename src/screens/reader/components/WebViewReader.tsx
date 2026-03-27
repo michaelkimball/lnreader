@@ -357,14 +357,28 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
     const handleElementChange = (event: PlaybackEvent) => {
       if (event.type === 'elementChange' && event.index !== undefined) {
-        // Update the queue index ref to track current position
-        // This ensures UI sync works correctly when returning from background
         ttsQueueIndexRef.current = event.index;
-        
-        // 'elementChange' is emitted when NEW audio starts playing
-        // WebView already advanced via handleQueueEnd ('queueEnd' → inject tts.next())
-        // This event is just for UI updates - do NOT inject tts.next() here!
         console.log('[WebViewReader] Element changed to index:', event.index);
+
+        // In full-queue mode the WebView doesn't drive playback, so it never
+        // calls tts.next() itself. Push a highlight update directly so the
+        // reader stays in sync with what is actually playing.
+        if (ttsFullQueueInitializedRef.current) {
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (window.tts && tts.allReadableElements && tts.allReadableElements.length) {
+                var idx = ${event.index};
+                tts.allReadableElements.forEach(function(el) { el && el.classList && el.classList.remove('highlight'); });
+                tts.elementsRead = idx + 1;
+                tts.currentElement = tts.allReadableElements[idx];
+                if (tts.currentElement) {
+                  tts.currentElement.classList.add('highlight');
+                  tts.scrollToElement && tts.scrollToElement(tts.currentElement);
+                }
+              }
+            })();
+          `);
+        }
       }
     };
 

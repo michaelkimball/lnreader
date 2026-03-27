@@ -146,7 +146,8 @@ export const markDownloadCompleted = async (
   downloadId: number,
   storageDir: string,
   audioFilesPaths: string[],
-  totalSizeMB: number
+  totalSizeMB: number,
+  elementOffsets?: number[]
 ): Promise<void> => {
   await dbManager.write(async tx => {
     tx.update(ttsDownloadSchema)
@@ -157,6 +158,7 @@ export const markDownloadCompleted = async (
         downloadedElements: audioFilesPaths.length,
         totalSizeMB,
         completedAt: new Date().toISOString(),
+        elementOffsets: elementOffsets ? JSON.stringify(elementOffsets) : null,
       })
       .where(eq(ttsDownloadSchema.id, downloadId))
       .run();
@@ -435,7 +437,7 @@ export const getTotalDownloadStorage = async (): Promise<number> => {
  */
 export const getAudioFilePaths = async (chapterId: number): Promise<string[] | null> => {
   const download = await getTTSDownload(chapterId);
-  
+
   if (!download || download.status !== 'completed' || !download.audioFilesPaths) {
     return null;
   }
@@ -444,6 +446,19 @@ export const getAudioFilePaths = async (chapterId: number): Promise<string[] | n
     return JSON.parse(download.audioFilesPaths);
   } catch (error) {
     console.error('[TTSDownloadQueries] Failed to parse audio file paths:', error);
+    return null;
+  }
+};
+
+/**
+ * Get element timing offsets for a chapter (for offline position tracking)
+ */
+export const getElementOffsets = async (chapterId: number): Promise<number[] | null> => {
+  const download = await getTTSDownload(chapterId);
+  if (!download?.elementOffsets) return null;
+  try {
+    return JSON.parse(download.elementOffsets);
+  } catch {
     return null;
   }
 };

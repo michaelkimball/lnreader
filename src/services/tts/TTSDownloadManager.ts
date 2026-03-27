@@ -17,7 +17,7 @@
 
 import { EventEmitter } from './EventEmitter';
 import { azureBlobStorage } from './AzureBlobStorage';
-import { azureBatchSynthesis, BatchJobStatus, VoiceSettings } from './AzureBatchSynthesisService';
+import { azureBatchSynthesis, BatchJobStatus, VoiceSettings, SentenceBoundary } from './AzureBatchSynthesisService';
 import {
   createTTSDownload,
   updateBatchJobId,
@@ -402,15 +402,25 @@ class TTSDownloadManager extends EventEmitter {
         throw new Error('Download not found');
       }
 
-      // Create storage directory for this chapter
       const chapterDirectory = this.chapterDir(download.chapterId);
       chapterDirectory.create({ idempotent: true });
       const chapterDir = chapterDirectory.uri;
 
-      // Download audio files
-      const audioFiles = await azureBatchSynthesis.downloadResults(status, chapterDir);
+      const { audioFiles, sentenceBoundaries } = await azureBatchSynthesis.downloadResults(status, chapterDir);
 
-      // Calculate total size
+      // Compute element start offsets from sentence boundaries
+      let elementOffsets: number[] | undefined;
+      const tempFile = this.tempFile(downloadId);
+      if (tempFile.exists && sentenceBoundaries.length > 0) {
+        try {
+          const tempData = await tempFile.text();
+          const { textElements } = JSON.parse(tempData) as { textElements: string[]; voiceSettings: VoiceSettings };
+          elementOffsets = this.computeElementOffsets(sentenceBoundaries, textElements);
+        } catch (e) {
+          console.warn('[TTSDownloadManager] Failed to compute element offsets:', e);
+        }
+      }
+
       let totalSizeMB = 0;
       for (const filePath of audioFiles) {
         const file = new File(filePath);
@@ -419,11 +429,8 @@ class TTSDownloadManager extends EventEmitter {
         }
       }
 
-      // Update database
-      await markDownloadCompleted(downloadId, chapterDir, audioFiles, Math.round(totalSizeMB * 100) / 100);
+      await markDownloadCompleted(downloadId, chapterDir, audioFiles, Math.round(totalSizeMB * 100) / 100, elementOffsets);
 
-      // Cleanup temp file and Azure resources
-      const tempFile = this.tempFile(downloadId);
       if (tempFile.exists) {
         tempFile.delete();
       }
@@ -432,30 +439,52 @@ class TTSDownloadManager extends EventEmitter {
       }
       await azureBatchSynthesis.deleteJob(status.id);
 
-      console.log('[TTSDownloadManager] Download completed:', { downloadId, files: audioFiles.length, sizeMB: totalSizeMB });
+      console.log('[TTSDownloadManager] Download completed:', { downloadId, files: audioFiles.length, sizeMB: totalSizeMB, elementOffsets: elementOffsets?.length });
 
-      // Emit completed event
       this.emit('downloadCompleted', {
         type: 'downloadCompleted',
         downloadId,
         chapterId: download.chapterId,
       });
 
-      // Continue processing queue
       this.emitQueueChanged();
       this.processQueue();
 
     } catch (error) {
       console.error('[TTSDownloadManager] Failed to handle job success:', error);
       await markDownloadFailed(downloadId, error instanceof Error ? error.message : 'Download failed');
-      
+
       this.emit('downloadFailed', {
         type: 'downloadFailed',
         downloadId,
-        chapterId: 0, // We'd need to get this from the download
+        chapterId: 0,
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  }
+
+  /**
+   * Compute per-element audio start offsets (in ms) from Azure sentence boundaries
+   */
+  private computeElementOffsets(
+    boundaries: SentenceBoundary[],
+    textElements: string[]
+  ): number[] {
+    const sentenceBoundaries = boundaries.filter(b => b.BoundaryType === 'Sentence');
+    if (sentenceBoundaries.length === 0) return [];
+
+    const offsets: number[] = [];
+    let boundaryIdx = 0;
+
+    for (const text of textElements) {
+      const boundary = sentenceBoundaries[boundaryIdx];
+      offsets.push(boundary ? Math.round(boundary.AudioOffset / 10000) : (offsets[offsets.length - 1] ?? 0));
+      // Count sentences in this element to advance to next element's first boundary
+      const sentenceCount = Math.max(1, (text.match(/[.!?]+(?:\s|$)/g) || []).length);
+      boundaryIdx += sentenceCount;
+    }
+
+    return offsets;
   }
 
   /**

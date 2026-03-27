@@ -63,6 +63,17 @@ export interface BatchJobResult {
   duration?: number; // Audio duration in seconds
 }
 
+export interface SentenceBoundary {
+  AudioOffset: number; // 100-nanosecond ticks
+  BoundaryType: string;
+  Text?: string;
+}
+
+export interface DownloadResults {
+  audioFiles: string[];
+  sentenceBoundaries: SentenceBoundary[];
+}
+
 class AzureBatchSynthesisService {
   private subscriptionKey: string = '';
   private region: string = '';
@@ -107,18 +118,16 @@ class AzureBatchSynthesisService {
   }
 
   /**
-   * Create SSML document for batch synthesis
-   * Batch API requires SSML format with specific structure
+   * Create SSML document for batch synthesis.
+   * All text elements are combined into one document → one output audio file.
    */
   private createSSMLDocument(texts: string[], voiceSettings: VoiceSettings): string {
     const { voice, rate = 1.0, pitch = 1.0 } = voiceSettings;
 
-    // Prosody attributes for rate and pitch
     const rateValue = `${Math.round(rate * 100)}%`;
     const pitchValue = pitch >= 1.0 ? `+${Math.round((pitch - 1) * 50)}%` : `-${Math.round((1 - pitch) * 50)}%`;
 
-    // Create SSML entries for each text
-   const ssmlEntries = texts.map((text, index) => {
+    const ssmlEntries = texts.map((text) => {
       const sanitizedText = text
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -135,9 +144,8 @@ class AzureBatchSynthesisService {
     </voice>`;
     }).join('\n');
 
-    // Complete SSML document
     return `<?xml version="1.0" encoding="UTF-8"?>
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" 
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
        xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
 ${ssmlEntries}
 </speak>`;
@@ -156,7 +164,7 @@ ${ssmlEntries}
     }
 
     try {
-      // Build SSML and pass inline — 2024-04-01 API uses PUT with job ID in URL
+      // All text elements are combined into one SSML → one output audio file.
       const texts = request.inputs.map((input) => input.text);
       const ssml = this.createSSMLDocument(texts, request.voiceSettings);
 
@@ -169,15 +177,11 @@ ${ssmlEntries}
       const jobPayload = {
         description: `Batch synthesis for chapter ${chapterId}`,
         inputKind: 'SSML',
-        inputs: [
-          {
-            content: ssml,
-          },
-        ],
+        inputs: [{ content: ssml }],
         properties: {
           outputFormat: request.outputFormat || 'audio-24khz-96kbitrate-mono-mp3',
           wordBoundaryEnabled: false,
-          sentenceBoundaryEnabled: false,
+          sentenceBoundaryEnabled: true,
           concatenateResult: false,
           decompressOutputFiles: false,
         },
@@ -277,12 +281,12 @@ ${ssmlEntries}
 
   /**
    * Download batch synthesis results
-   * 
+   *
    * @param jobStatus - Completed job status
    * @param downloadDir - Local directory to save files
-   * @returns Array of downloaded file paths
+   * @returns Audio file paths and sentence boundaries
    */
-  async downloadResults(jobStatus: BatchJobStatus, downloadDir: string): Promise<string[]> {
+  async downloadResults(jobStatus: BatchJobStatus, downloadDir: string): Promise<DownloadResults> {
     if (jobStatus.status !== 'Succeeded') {
       throw new Error(`Cannot download results - job status is ${jobStatus.status}`);
     }
@@ -294,7 +298,6 @@ ${ssmlEntries}
     const tempZipFile = new File(Paths.cache, `batch_${jobStatus.id}.zip`);
 
     try {
-      // Download the results ZIP
       const response = await fetch(jobStatus.outputs.result);
       if (!response.ok) {
         throw new Error(`Failed to download results ZIP: ${response.status}`);
@@ -302,25 +305,41 @@ ${ssmlEntries}
       const bytes = new Uint8Array(await response.arrayBuffer());
       tempZipFile.write(bytes);
 
-      // Extract ZIP to chapter directory
       const extractDir = downloadDir.replace(/\/$/, '');
       await unzip(tempZipFile.uri, extractDir);
 
-      // List extracted audio files
       const chapterDirectory = new Directory(downloadDir);
       const entries = chapterDirectory.list();
+
       const audioFiles = (entries as File[])
         .filter(f => f.uri.endsWith('.mp3') || f.uri.endsWith('.wav'))
         .sort((a, b) => a.uri.localeCompare(b.uri))
         .map(f => f.uri);
 
-      console.log(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files`);
-      return audioFiles;
+      // Parse sentence boundary JSON (same base name as audio, .json extension)
+      let sentenceBoundaries: SentenceBoundary[] = [];
+      const jsonFiles = (entries as File[])
+        .filter(f => f.uri.endsWith('.json'))
+        .sort((a, b) => a.uri.localeCompare(b.uri));
+
+      if (jsonFiles.length > 0) {
+        try {
+          const jsonText = await jsonFiles[0].text();
+          const parsed = JSON.parse(jsonText);
+          if (Array.isArray(parsed)) {
+            sentenceBoundaries = parsed as SentenceBoundary[];
+          }
+        } catch (e) {
+          console.warn('[AzureBatchSynthesis] Failed to parse timing JSON:', e);
+        }
+      }
+
+      console.log(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files, ${sentenceBoundaries.length} sentence boundaries`);
+      return { audioFiles, sentenceBoundaries };
     } catch (error) {
       console.error('[AzureBatchSynthesis] Download failed:', error);
       throw error;
     } finally {
-      // Clean up temp ZIP regardless of success/failure
       if (tempZipFile.exists) {
         tempZipFile.delete();
       }

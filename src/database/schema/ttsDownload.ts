@@ -31,6 +31,7 @@ export const ttsDownload = sqliteTable(
     // File storage
     storageDir: text('storageDir'), // Local directory where audio files are stored
     audioFilesPaths: text('audioFilesPaths'), // JSON array of file paths
+    elementOffsets: text('elementOffsets'), // JSON number[] of ms offsets per text element
     
     // Voice settings used for generation
     voiceName: text('voiceName'), // e.g., "en-US-JennyNeural"
