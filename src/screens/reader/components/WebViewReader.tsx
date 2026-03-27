@@ -117,6 +117,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   const ttsQueueRef = useRef<string[]>([]);
   const ttsQueueIndexRef = useRef<number>(0);
   const ttsFullQueueInitializedRef = useRef<boolean>(false);
+  const ttsElementIndexMapRef = useRef<number[]>([]); // textQueue index → allReadableElements index
 
   // TTS position persistence helper
   const getTTSPositionKey = (chapterId: number) => `tts_position_${chapterId}`;
@@ -389,10 +390,16 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
         // calls tts.next() itself. Push a highlight update directly so the
         // reader stays in sync with what is actually playing.
         if (ttsFullQueueInitializedRef.current) {
+          // Map the PlaybackManager's queue index (into textQueue) to the
+          // correct allReadableElements index via the stored indexMap.
+          const indexMap = ttsElementIndexMapRef.current;
+          const realIdx = indexMap.length > 0 && event.index < indexMap.length
+            ? indexMap[event.index]
+            : event.index;
           webViewRef.current?.injectJavaScript(`
             (function() {
               if (window.tts && tts.allReadableElements && tts.allReadableElements.length) {
-                var idx = ${event.index};
+                var idx = ${realIdx};
                 tts.allReadableElements.forEach(function(el) { el && el.classList && el.classList.remove('highlight'); });
                 tts.elementsRead = idx + 1;
                 tts.currentElement = tts.allReadableElements[idx];
@@ -601,7 +608,7 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
         switch (event.type) {
           case 'tts-queue': {
             const payload = event.data as
-              | { queue?: unknown; startIndex?: unknown }
+              | { queue?: unknown; startIndex?: unknown; indexMap?: unknown }
               | undefined;
             const queue = Array.isArray(payload?.queue)
               ? payload?.queue.filter(
@@ -615,6 +622,9 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             } else {
               ttsQueueIndexRef.current = 0;
             }
+            ttsElementIndexMapRef.current = Array.isArray(payload?.indexMap)
+              ? (payload.indexMap as unknown[]).filter((x): x is number => typeof x === 'number')
+              : [];
             
             console.log('[WebViewReader] tts-queue received with', queue.length, 'elements - will initialize PlaybackManager on first speak');
             break;
@@ -740,7 +750,11 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
                 };
                 
                 // Initialize with FULL queue
-                ttsPlaybackManager.play(ttsQueueRef.current, event.index || 0, chapter.id, novel?.id || 0, voiceSettings);
+                // Use textIndex (textQueue index) rather than index (allReadableElements index)
+                const ttsStartIndex = typeof (event as Record<string, unknown>).textIndex === 'number'
+                  ? (event as Record<string, unknown>).textIndex as number
+                  : (event.index || 0);
+                ttsPlaybackManager.play(ttsQueueRef.current, ttsStartIndex, chapter.id, novel?.id || 0, voiceSettings);
                 ttsFullQueueInitializedRef.current = true;
               } else {
                 // Fallback: single element
