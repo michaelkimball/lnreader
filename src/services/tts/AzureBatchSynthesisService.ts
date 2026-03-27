@@ -330,12 +330,16 @@ ${ssmlEntries}
         .filter(f => f.uri.endsWith('.json'))
         .sort((a, b) => a.uri.localeCompare(b.uri));
 
-      console.log('[AzureBatchSynthesis] JSON files found:', jsonFiles.map(f => f.uri));
-      if (jsonFiles.length > 0) {
+      // Azure names sentence boundary files "*.sentence.json"
+      const sentenceJsonFiles = (entries as File[])
+        .filter(f => f.uri.endsWith('.sentence.json'))
+        .sort((a, b) => a.uri.localeCompare(b.uri));
+
+      if (sentenceJsonFiles.length > 0) {
         try {
-          const jsonText = await jsonFiles[0].text();
+          const jsonText = await sentenceJsonFiles[0].text();
           const parsed = JSON.parse(jsonText);
-          console.log('[AzureBatchSynthesis] First JSON entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
+          console.log('[AzureBatchSynthesis] sentence.json first entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
           if (Array.isArray(parsed)) {
             sentenceBoundaries = parsed as SentenceBoundary[];
           }
