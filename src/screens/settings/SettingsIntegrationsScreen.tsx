@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Portal, TextInput, Text } from 'react-native-paper';
 
-import { Appbar, Button, List, SafeAreaView, Switch, Modal } from '@components';
+import { Appbar, Button, List, SafeAreaView, SwitchItem, Modal } from '@components';
 import { useTheme, useIntegrationSettings } from '@hooks/persisted';
 import { showToast } from '@utils/showToast';
 import { getString } from '@strings/translations';
@@ -119,36 +119,30 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
             icon="information-outline"
             onPress={() => setShowHelpModal(true)}
           />
-          <List.Item
-            title="Enable Microsoft Speech"
+          <SwitchItem
+            label="Enable Microsoft Speech"
             description={isEnabled ? 'Active' : 'Disabled'}
+            value={isEnabled}
+            onPress={() => {
+              const next = !isEnabled;
+              setIsEnabled(next);
+              if (!next) {
+                setIntegrationSettings({
+                  microsoftSpeech: {
+                    subscriptionKey,
+                    region,
+                    enabled: false,
+                    autoDownloadOnChapterDownload: autoDownloadTTS,
+                  },
+                });
+              }
+            }}
             theme={theme}
-            onPress={() => setIsEnabled(!isEnabled)}
-            rightIcon={
-              <Switch
-                value={isEnabled}
-                onValueChange={(value) => {
-                  setIsEnabled(value);
-                  if (!value) {
-                    // Disable immediately without saving
-                    setIntegrationSettings({
-                      microsoftSpeech: {
-                        subscriptionKey,
-                        region,
-                        enabled: false,
-                        autoDownloadOnChapterDownload: autoDownloadTTS,
-                      },
-                    });
-                  }
-                }}
-                theme={theme}
-              />
-            }
           />
-          <List.Item
-            title="Auto-download TTS on chapter download"
+          <SwitchItem
+            label="Auto-download TTS on chapter download"
             description="Automatically queue TTS audio when downloading a chapter"
-            theme={theme}
+            value={autoDownloadTTS}
             onPress={() => {
               const next = !autoDownloadTTS;
               setAutoDownloadTTS(next);
@@ -161,23 +155,7 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
                 },
               });
             }}
-            rightIcon={
-              <Switch
-                value={autoDownloadTTS}
-                onValueChange={(value) => {
-                  setAutoDownloadTTS(value);
-                  setIntegrationSettings({
-                    microsoftSpeech: {
-                      subscriptionKey,
-                      region,
-                      enabled: isEnabled,
-                      autoDownloadOnChapterDownload: value,
-                    },
-                  });
-                }}
-                theme={theme}
-              />
-            }
+            theme={theme}
           />
         </List.Section>
 
@@ -244,35 +222,31 @@ const SettingsIntegrationsScreen = ({ navigation }: IntegrationsSettingsScreenPr
             icon="information-outline"
             onPress={() => setShowBlobHelpModal(true)}
           />
-          <List.Item
-            title="Enable Blob Storage"
+          <SwitchItem
+            label="Enable Blob Storage"
             description={isBlobEnabled ? 'Active' : 'Disabled'}
+            value={isBlobEnabled}
+            onPress={() => {
+              const next = !isBlobEnabled;
+              setIsBlobEnabled(next);
+              if (!next) {
+                setIntegrationSettings({
+                  microsoftSpeech: {
+                    subscriptionKey,
+                    region,
+                    enabled: isEnabled,
+                    autoDownloadOnChapterDownload: autoDownloadTTS,
+                  },
+                  azureBlobStorage: {
+                    accountName: blobAccountName,
+                    accountKey: blobAccountKey,
+                    containerName: blobContainerName,
+                    enabled: false,
+                  },
+                });
+              }
+            }}
             theme={theme}
-            onPress={() => setIsBlobEnabled(!isBlobEnabled)}
-            rightIcon={
-              <Switch
-                value={isBlobEnabled}
-                onValueChange={(value) => {
-                  setIsBlobEnabled(value);
-                  if (!value) {
-                    setIntegrationSettings({
-                      microsoftSpeech: {
-                        subscriptionKey,
-                        region,
-                        enabled: isEnabled,
-                      },
-                      azureBlobStorage: {
-                        accountName: blobAccountName,
-                        accountKey: blobAccountKey,
-                        containerName: blobContainerName,
-                        enabled: false,
-                      },
-                    });
-                  }
-                }}
-                theme={theme}
-              />
-            }
           />
           <View style={styles.inputContainer}>
             <TextInput
