@@ -63,6 +63,16 @@ const AdvancedSettings = ({ navigation }: AdvancedSettingsScreenProps) => {
       />
       <ScrollView>
         <List.Section>
+          <List.SubHeader theme={theme}>TTS</List.SubHeader>
+          <List.Item
+            title="TTS Download Logs"
+            description="View and manage offline TTS audio downloads"
+            icon="microphone-outline"
+            onPress={() => navigation.navigate('TTSDownloads')}
+            theme={theme}
+          />
+        </List.Section>
+        <List.Section>
           <List.SubHeader theme={theme}>
             {getString('advancedSettingsScreen.dataManagement')}
           </List.SubHeader>

@@ -17,6 +17,7 @@ import { useTheme } from '@hooks/persisted';
 import { TTSDownloadRow } from '@database/schema';
 import { getTTSDownloadsByStatus } from '@database/queries/TTSDownloadQueries';
 import { ttsDownloadManager, DownloadEvent } from '@services/tts/TTSDownloadManager';
+import { getNovelById } from '@database/queries/NovelQueries';
 import { showToast } from '@utils/showToast';
 import dayjs from 'dayjs';
 
@@ -28,6 +29,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
   const theme = useTheme();
   const [loading, setLoading] = useState(true);
   const [downloads, setDownloads] = useState<TTSDownloadRow[]>([]);
+  const [novelNames, setNovelNames] = useState<Record<number, string>>({});
   const [stats, setStats] = useState({
     total: 0,
     pending: 0,
@@ -49,6 +51,17 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
 
       const allDownloads = [...processing, ...pending, ...completed, ...failed];
       setDownloads(allDownloads);
+
+      // Build novel name map for unique novelIds
+      const uniqueNovelIds = [...new Set(allDownloads.map(d => d.novelId))];
+      const nameEntries = await Promise.all(
+        uniqueNovelIds.map(async id => {
+          const novel = await getNovelById(id);
+          return [id, novel?.name ?? `Novel ${id}`] as [number, string];
+        }),
+      );
+      setNovelNames(Object.fromEntries(nameEntries));
+
       setStats({
         total: allDownloads.length,
         pending: pending.length,
@@ -154,7 +167,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
         )}
       >
         <List.Item
-          title={`Chapter ${item.chapterId}`}
+          title={`${novelNames[item.novelId] ?? `Novel ${item.novelId}`} — Chapter ${item.chapterId}`}
           description={`${statusText}\n${createdDate} • ${item.voiceName}`}
           theme={theme}
         />
@@ -210,7 +223,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
   return (
     <SafeAreaView excludeTop>
       <Appbar
-        title="TTS Downloads"
+        title="TTS Download Logs"
         handleGoBack={navigation.goBack}
         theme={theme}
       >

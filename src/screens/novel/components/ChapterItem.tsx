@@ -16,6 +16,7 @@ interface ChapterItemProps {
   isSelected?: boolean;
   isLocal: boolean;
   isUpdateCard?: boolean;
+  hasTTSDownload?: boolean;
   theme: ThemeColors;
   showChapterTitles: boolean;
   novelName: string;
@@ -33,6 +34,7 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
   isSelected,
   isLocal,
   isUpdateCard,
+  hasTTSDownload,
   theme,
   showChapterTitles,
   novelName,
@@ -123,6 +125,14 @@ const ChapterItem: React.FC<ChapterItemProps> = ({
                   color={theme.primary}
                   size={8}
                   style={styles.unreadIcon}
+                />
+              ) : null}
+              {hasTTSDownload ? (
+                <MaterialCommunityIcons
+                  name="headphones"
+                  color={theme.primary}
+                  size={12}
+                  style={styles.ttsIcon}
                 />
               ) : null}
 
@@ -221,6 +231,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   unreadIcon: {
+    marginEnd: 4,
+  },
+  ttsIcon: {
     marginEnd: 4,
   },
   updateCardName: {

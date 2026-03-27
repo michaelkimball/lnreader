@@ -180,7 +180,7 @@ export type BackupSettingsScreenProps = StackScreenProps<
   'BackupSettings'
 >;
 export type AdvancedSettingsScreenProps = StackScreenProps<
-  SettingsStackParamList,
+  MoreStackParamList & SettingsStackParamList,
   'AdvancedSettings'
 >;
 

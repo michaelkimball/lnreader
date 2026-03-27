@@ -10,6 +10,7 @@ import {
   deleteDownloads,
   getDownloadedChapters,
 } from '@database/queries/ChapterQueries';
+import { getTTSDownloadsByStatus } from '@database/queries/TTSDownloadQueries';
 
 import { useTheme } from '@hooks/persisted';
 
@@ -29,6 +30,7 @@ const Downloads = ({ navigation }: DownloadsScreenProps) => {
   const theme = useTheme();
   const [loading, setLoading] = useState(true);
   const [chapters, setChapters] = useState<DownloadedChapter[]>([]);
+  const [ttsDownloadIds, setTtsDownloadIds] = useState<Set<number>>(new Set());
   const groupUpdatesByDate = (
     localChapters: DownloadedChapter[],
   ): DownloadedChapter[][] => {
@@ -53,7 +55,11 @@ const Downloads = ({ navigation }: DownloadsScreenProps) => {
   const hideDialog = () => setVisible(false);
 
   const getChapters = async () => {
-    const res = await getDownloadedChapters();
+    const [res, completedTTS] = await Promise.all([
+      getDownloadedChapters(),
+      getTTSDownloadsByStatus('completed'),
+    ]);
+    setTtsDownloadIds(new Set(completedTTS.map(d => d.chapterId)));
     setChapters(
       res.map(download => {
         const parsedTime = dayjs(download.releaseTime);
@@ -114,6 +120,7 @@ const Downloads = ({ navigation }: DownloadsScreenProps) => {
               <UpdateNovelCard
                 onlyDownloadedChapters
                 chapterList={item}
+                ttsDownloadIds={ttsDownloadIds}
                 descriptionText={getString('downloadScreen.downloadsLower')}
                 deleteChapter={chapter => {
                   deleteChapter(
