@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { View, StyleSheet, Text, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
-import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import Slider from '@react-native-community/slider';
 import { getAvailableVoicesAsync, Voice } from 'expo-speech';
 import { getLocales } from 'expo-localization';
@@ -571,7 +570,7 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
 
   return (
     <>
-      <BottomSheetScrollView
+      <ScrollView
         style={styles.container}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.contentContainer}
@@ -797,7 +796,7 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
         </View>
 
         <View style={styles.bottomSpacing} />
-      </BottomSheetScrollView>
+      </ScrollView>
 
       <VoicePickerModal
         visible={voiceModalVisible}

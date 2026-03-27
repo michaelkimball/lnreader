@@ -333,8 +333,16 @@ class TTSPlaybackManager extends EventEmitter {
         this.onPlaybackStatusUpdate.bind(this)
       );
 
-      console.log('[TTSPlaybackManager] Offline sound created and playing! seekMs:', seekPositionMs);
       this.currentSound = sound;
+
+      // If user pressed pause while we were loading/transitioning, honor it
+      if (this.state === 'paused') {
+        console.log('[TTSPlaybackManager] State changed to paused during offline load - pausing sound');
+        await sound.pauseAsync();
+        return;
+      }
+
+      console.log('[TTSPlaybackManager] Offline sound created and playing! seekMs:', seekPositionMs);
       this.setState('playing');
 
       // Update UI — emit the text element we're actually starting at
@@ -401,7 +409,20 @@ class TTSPlaybackManager extends EventEmitter {
         return;
       }
 
-      await this.currentSound?.playAsync();
+      if (!this.currentSound) {
+        // State is paused but no sound loaded (race condition during element transition)
+        // Re-trigger playback from current position; playCurrentElement will honor paused state
+        console.log('[TTSPlaybackManager] resume() - no sound, re-loading current element');
+        this.setState('loading');
+        if (this.isOfflineMode) {
+          await this.playCurrentElementOffline(this.currentIndex);
+        } else {
+          await this.playCurrentElement();
+        }
+        return;
+      }
+
+      await this.currentSound.playAsync();
       this.setState('playing');
       console.log('[TTSPlaybackManager] resume() successful');
       
@@ -618,8 +639,16 @@ class TTSPlaybackManager extends EventEmitter {
         this.onPlaybackStatusUpdate.bind(this)
       );
 
-      console.log('[TTSPlaybackManager] Sound created and playing!');
       this.currentSound = sound;
+
+      // If user pressed pause while we were loading/transitioning, honor it
+      if (this.state === 'paused') {
+        console.log('[TTSPlaybackManager] State changed to paused during load - pausing sound');
+        await sound.pauseAsync();
+        return;
+      }
+
+      console.log('[TTSPlaybackManager] Sound created and playing!');
       this.setState('playing');
 
       // Update UI

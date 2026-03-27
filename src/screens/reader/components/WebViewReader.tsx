@@ -352,6 +352,31 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             isPlaying: isPlaying,
           });
         }
+
+        // Sync the WebView TTS button icon when playback state changes from outside
+        // (e.g. Bluetooth headphone controls). tts.reading and the icon are normally
+        // only updated by the WebView's own onclick handler, so we must sync them here.
+        if (isPaused) {
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (window.tts) { tts.reading = false; }
+              var c = document.getElementById('TTS-Controller');
+              if (c && c.firstElementChild && typeof resumeIcon !== 'undefined') {
+                c.firstElementChild.innerHTML = resumeIcon;
+              }
+            })();
+          `);
+        } else if (isPlaying) {
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (window.tts) { tts.reading = true; }
+              var c = document.getElementById('TTS-Controller');
+              if (c && c.firstElementChild && typeof pauseIcon !== 'undefined') {
+                c.firstElementChild.innerHTML = pauseIcon;
+              }
+            })();
+          `);
+        }
       }
     };
 

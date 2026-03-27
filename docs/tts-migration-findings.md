@@ -1438,3 +1438,328 @@ const handleRetry = async (chapterId: number) => {
 
 ## Phase 1 COMPLETE ✅ + Phase 2 COMPLETE ✅ = TTS Migration Ready! 🎉
 
+---
+
+## Phase 2 Real-Device Testing Issues (March 27, 2026)
+
+End-to-end testing with real Azure credentials revealed 7 additional bugs.
+
+### 18. TTSDownloadsScreen Crash on Open - List.InfoText Doesn't Exist (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Opening "TTS Downloads" under More menu crashes immediately with "Element type is invalid"
+**Root Cause**: Used `List.InfoText` (doesn't exist) and `text` prop (wrong prop name)
+
+**The Bug**:
+```typescript
+// ❌ WRONG - List.InfoText is not a valid component
+<List.InfoText text={`${stats.completed} completed...`} theme={theme} />
+```
+
+**Fix**:
+```typescript
+// ✅ CORRECT
+<List.InfoItem title={`${stats.completed} completed...`} theme={theme} />
+```
+
+**Key Learning**: The `List` component exports `List.Item` and `List.InfoItem`. `InfoItem` uses `title` prop, not `text`. Always verify component API against the actual source before use.
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 19. No UX to Delete or Clear Downloads (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Downloads screen had no way to remove individual items or clear all
+
+**Solution - Two deletion paths**:
+
+1. **Swipe-to-delete** (individual): `ReanimatedSwipeable` from `react-native-gesture-handler/ReanimatedSwipeable`
+```tsx
+<Swipeable
+  dragOffsetFromRightEdge={30}
+  renderRightActions={(_progress, _dragX, ref) => (
+    <View style={[styles.deleteAction, { backgroundColor: theme.error }]}>
+      <IconButtonV2
+        name="delete"
+        size={24}
+        color={'#fff'}
+        onPress={() => { ref.close(); handleDelete(item); }}
+        theme={theme}
+      />
+    </View>
+  )}
+>
+  <List.Item ... />
+</Swipeable>
+```
+
+2. **Clear-all button** (appbar): `delete-sweep` icon → `ConfirmationDialog`
+
+**Delete logic**:
+- `status === 'pending' | 'processing'` → `cancelDownload(chapterId)` (stops job)
+- `status === 'completed' | 'failed'` → `deleteDownload(chapterId)` (removes files)
+
+**`deleteAllDownloads()` added to TTSDownloadManager**:
+```typescript
+async deleteAllDownloads(): Promise<void> {
+  const statuses = ['completed', 'failed', 'pending', 'processing'] as const;
+  for (const status of statuses) {
+    const downloads = await getTTSDownloadsByStatus(status);
+    for (const d of downloads) {
+      await this.cancelDownload(d.chapterId);
+    }
+  }
+}
+```
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 20. No Delete Option Inside Chapter TTS Menu (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Users who downloaded from TTSTab had no way to cancel or delete from same screen
+
+**Solution**: Added Delete/Cancel button to `TTSTab.tsx` download row (visible whenever `downloadStatus !== 'none'`):
+```tsx
+{downloadStatus !== 'none' && (
+  <Button
+    title={downloadStatus === 'processing' || downloadStatus === 'pending' ? 'Cancel' : 'Delete'}
+    mode="outlined"
+    onPress={handleDeleteDownload}
+    style={styles.deleteButton}
+    textColor={theme.error}
+  />
+)}
+```
+Download button row changed to `flexDirection: 'row'` with `gap: 8` and `downloadButton: { flex: 1 }`.
+
+`handleDeleteDownload` calls `ttsDownloadManager.cancelDownload(chapter.id)` which works for all statuses.
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 21. Zero Sentence Boundaries Extracted (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Logs showed `0 sentence boundaries` despite successful Azure job completion
+
+**Root Cause Chain**:
+1. Azure batch synthesis ZIP contains: `0001.mp3`, `0001.debug.json`, `0001.sentence.json`, `summary.json`
+2. Code filtered for files ending in `.json` (matches all 3 JSON files)
+3. Sorted alphabetically → first file was `0001.debug.json`, NOT `0001.sentence.json`
+4. Debug JSON has completely different structure — no `AudioOffset` fields → parsed as empty
+
+**Fix in `AzureBatchSynthesisService.downloadResults()`**:
+```typescript
+// ❌ WRONG - picks debug.json first alphabetically
+const jsonFiles = entries.filter(f => f.uri.endsWith('.json'));
+
+// ✅ CORRECT - targets sentence boundary files specifically
+const sentenceJsonFiles = entries.filter(f => f.uri.endsWith('.sentence.json'));
+```
+
+**Azure ZIP contents reference**:
+| File | Contents |
+|------|----------|
+| `0001.mp3` | Audio output |
+| `0001.debug.json` | Debug/diagnostic info (NOT boundaries) |
+| `0001.sentence.json` | Sentence timing boundaries ← needed |
+| `summary.json` | Job summary metadata |
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 22. SentenceBoundary Interface / AudioOffset Units Wrong (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: After fixing file selection, still 0 boundaries; then after fixing that, element offsets all collapsed to ~0ms
+
+**Two separate bugs**:
+
+**Bug A - Wrong interface**: `SentenceBoundary` had `BoundaryType` field and complex nested structure. Actual Azure sentence.json format is flat:
+```typescript
+// ✅ Actual format
+export interface SentenceBoundary {
+  AudioOffset: number;  // milliseconds
+  Duration?: number;    // milliseconds
+  Text?: string;
+}
+```
+No `BoundaryType` in `*.sentence.json` files — they are sentence-only by definition.
+
+**Bug B - Wrong units**: `computeElementOffsets()` divided `AudioOffset` by `10000`, treating it as 100-nanosecond ticks (Windows FILETIME format used by real-time SDK).
+
+**Actual batch synthesis JSON uses milliseconds directly**:
+- Confirmed by log: `AudioOffset: 50, Duration: 1106` for phrase "Chapter 1 Just an old Book" ≈ 1.1 seconds ✅
+- With `/10000`: `50/10000 = 0.005ms` → seek target effectively 0 for all elements
+
+**Fix**:
+```typescript
+// ❌ WRONG - treating as 100-ns ticks
+offsets.push(boundary ? boundary.AudioOffset / 10000 : ...)
+
+// ✅ CORRECT - already in milliseconds
+offsets.push(boundary ? boundary.AudioOffset : ...)
+```
+
+**Also removed BoundaryType filter** (sentence-only file needs no filtering):
+```typescript
+// ❌ Old code filtered by BoundaryType === 'SentenceBoundary'
+const sentenceBoundaries = boundaries.filter(b => b.BoundaryType === 'SentenceBoundary');
+
+// ✅ New code — all entries are sentences
+const sentenceBoundaries = boundaries;
+```
+
+**Key Distinction**:
+| Source | AudioOffset unit |
+|--------|-----------------|
+| Real-time Azure SDK (WebSocket) | 100-nanosecond ticks → divide by 10000 for ms |
+| Batch synthesis `*.sentence.json` | Milliseconds directly |
+
+**Status**: ✅ RESOLVED — 107 sentence boundaries extracted, correct timing confirmed
+
+---
+
+### 23. Offline Playback Blocked by Re-entrant Guard (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Tapping play on a completed download → logs showed "Already in state: loading", no audio
+
+**Root Cause**:
+```typescript
+// play() sets state = 'loading', THEN calls playFromOfflineFiles()
+async play(...) {
+  this.setState('loading');  // ← state is now 'loading'
+  // ...
+  await this.playFromOfflineFiles(startIndex);
+}
+
+// playFromOfflineFiles() blocked itself
+async playFromOfflineFiles(startIndex: number) {
+  if (this.state === 'loading' || this.state === 'playing') {
+    // ← state IS 'loading' (set by play() above) → immediate return!
+    return;
+  }
+}
+```
+
+**Fix**: Guard inside `playFromOfflineFiles()` only blocks `'playing'` (truly re-entrant), not `'loading'` (set by its own caller):
+```typescript
+async playFromOfflineFiles(startIndex: number) {
+  if (this.state === 'playing') {
+    console.log('[TTSPlaybackManager] Already playing - ignoring');
+    return;
+  }
+  // proceed...
+}
+```
+
+**The `loading || playing` guard in `play()` itself is still correct** — it prevents WebView rapid-fire speak events from stacking. Only the internal guard in `playFromOfflineFiles()` needed to change.
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 24. Offline Playback Crash - currentIndex Out of Bounds (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Starting TTS at element index 1+ → "No item or URI at current index" → immediate queueEnd, no audio
+
+**Root Cause**: Offline mode always has a single audio file at `queue[0]`. But code set `currentIndex = startIndex` (e.g. 1). Then `this.queue[1]` was `undefined`.
+
+**Key insight for offline single-file mode**:
+- `currentIndex` = **audio file index** in queue (always 0, one file)
+- `startIndex` = **text element index** for seek position and highlight
+
+```typescript
+// ❌ WRONG
+this.currentIndex = startIndex;  // e.g. 1 → queue[1] is undefined
+
+// ✅ CORRECT
+this.currentIndex = 0;                           // audio file index is always 0
+this.lastEmittedElementIndex = startIndex - 1;  // so first emit is the right element
+await this.playCurrentElementOffline(startIndex); // pass for seek
+```
+
+**In `playCurrentElementOffline(startElementIndex)`**:
+```typescript
+// Seek to the correct position in the single audio file
+const seekPositionMs = startElementIndex > 0 && this.elementOffsets.length > startElementIndex
+  ? this.elementOffsets[startElementIndex]
+  : 0;
+
+const { sound } = await Audio.Sound.createAsync(
+  { uri },
+  { shouldPlay: true, positionMillis: seekPositionMs },
+  this.onPlaybackStatusUpdate.bind(this)
+);
+
+// Emit the correct element on start
+const displayIndex = startElementIndex > 0 ? startElementIndex : this.currentIndex;
+this.emit('elementChange', { type: 'elementChange', index: displayIndex, text: item.text });
+```
+
+**Status**: ✅ RESOLVED
+
+---
+
+### 25. Offline Audio Plays at 2× Speed (RESOLVED)
+**Date Discovered**: March 27, 2026
+**Symptom**: Downloaded audio plays at double speed even with voice rate set to 1.0
+
+**Root Cause**: SSML `rate` attribute percentage vs decimal semantics:
+
+From Azure documentation:
+> "rate" accepts relative values as percentage. A value of 100% means the **current** voice's rate, 0% means the **slowest** rate, and **100% (or +100%) means double speed (x-fast)**.
+
+```xml
+<!-- ❌ WRONG - rate="100%" means +100% = 2× speed -->
+<prosody rate="100%" pitch="0%">text</prosody>
+
+<!-- ✅ CORRECT - rate="1.0" decimal = 1× normal speed -->
+<prosody rate="1.0" pitch="0%">text</prosody>
+```
+
+**The bug in `AzureBatchSynthesisService.createSSMLDocument()`**:
+```typescript
+// ❌ WRONG
+const rateValue = `${Math.round(rate * 100)}%`;  // rate=1.0 → "100%" → 2×
+
+// ✅ CORRECT - matches MicrosoftSpeechService online SSML format
+const rateValue = `${rate}`;  // rate=1.0 → "1.0" → 1×
+```
+
+**Pitch was also inconsistent**:
+```typescript
+// ❌ WRONG (used separate positive/negative branches)
+const pitchValue = pitch >= 1.0
+  ? `+${Math.round((pitch - 1) * 50)}%`
+  : `-${Math.round((1 - pitch) * 50)}%`;
+
+// ✅ CORRECT - signed percentage, matches MicrosoftSpeechService
+const pitchValue = `${(pitch - 1) * 50}%`;
+// pitch=1.0 → "0%", pitch=1.5 → "25%", pitch=0.5 → "-25%"
+```
+
+**Reference**: `MicrosoftSpeechService.generateSSML()` (online TTS) uses `rate="${rate}"` decimal format. Batch synthesis must match to produce identical audio speed.
+
+**Important**: Already-downloaded audio files synthesized with the wrong SSML will still play at 2×. Users must re-download after this fix.
+
+**Status**: ✅ RESOLVED
+
+---
+
+## Phase 2 Post-Testing Summary (March 27, 2026)
+
+All 7 post-testing issues resolved. Full end-to-end flow now confirmed working:
+- ✅ TTSDownloadsScreen opens without crash
+- ✅ Swipe-to-delete and clear-all UX
+- ✅ Delete/cancel from chapter TTS tab
+- ✅ Sentence boundaries correctly extracted (107 for a short chapter)
+- ✅ AudioOffset units correct (ms, not 100-ns ticks)
+- ✅ Offline playback unblocked
+- ✅ Mid-chapter resume to correct seek position
+- ✅ Audio plays at correct speed
+
+**DB note**: The `elementOffsets` column in `ttsDownload` table stores values in milliseconds. Any downloads created before the units fix have corrupted offsets — delete and re-download to get correct seek behavior.
+
