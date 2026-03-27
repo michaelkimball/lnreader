@@ -1,26 +1,27 @@
 /**
  * TTS Downloads Screen
- * 
+ *
  * Displays and manages offline TTS audio downloads for chapters.
- * Users can view download status, cancel downloads, and delete downloaded content.
+ * Swipe left on a row to delete. Use the clear-all button in the app bar
+ * to remove every download at once.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { FlatList, StyleSheet, View } from 'react-native';
 import { Appbar as MaterialAppbar } from 'react-native-paper';
+import Swipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 
 import EmptyView from '@components/EmptyView';
-import { Appbar, List, SafeAreaView } from '@components';
+import { Appbar, ConfirmationDialog, IconButtonV2, List, SafeAreaView } from '@components';
 import { useTheme } from '@hooks/persisted';
-import { getString } from '@strings/translations';
 import { TTSDownloadRow } from '@database/schema';
-import { getTTSDownloadsByStatus, deleteTTSDownload, getTTSDownloadStats } from '@database/queries/TTSDownloadQueries';
+import { getTTSDownloadsByStatus } from '@database/queries/TTSDownloadQueries';
 import { ttsDownloadManager, DownloadEvent } from '@services/tts/TTSDownloadManager';
 import { showToast } from '@utils/showToast';
 import dayjs from 'dayjs';
 
 interface TTSDownloadsScreenProps {
-  navigation: any; // TODO: Type this properly with navigator types
+  navigation: any;
 }
 
 const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
@@ -35,13 +36,10 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     failed: 0,
     totalSizeMB: 0,
   });
+  const [showClearAllDialog, setShowClearAllDialog] = useState(false);
 
-  /**
-   * Load downloads from database
-   */
   const loadDownloads = async () => {
     try {
-      // Get all downloads (completed + processing + pending)
       const [completed, processing, pending, failed] = await Promise.all([
         getTTSDownloadsByStatus('completed'),
         getTTSDownloadsByStatus('processing'),
@@ -51,103 +49,67 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
 
       const allDownloads = [...processing, ...pending, ...completed, ...failed];
       setDownloads(allDownloads);
-
-      // Calculate stats
-      const statsData = {
+      setStats({
         total: allDownloads.length,
         pending: pending.length,
         processing: processing.length,
         completed: completed.length,
         failed: failed.length,
         totalSizeMB: allDownloads.reduce((sum, d) => sum + (d.totalSizeMB || 0), 0),
-      };
-      setStats(statsData);
-
-      console.log('[TTSDownloadsScreen] Loaded downloads:', statsData);
+      });
     } catch (error) {
       console.error('[TTSDownloadsScreen] Failed to load downloads:', error);
       showToast('Failed to load downloads');
     }
   };
 
-  /**
-   * Handle download events from manager
-   */
   const handleDownloadEvent = useCallback((event: DownloadEvent) => {
-    console.log('[TTSDownloadsScreen] Download event:', event);
-    
-    switch (event.type) {
-      case 'downloadCompleted':
-        showToast('Download completed');
-        loadDownloads();
-        break;
-      case 'downloadFailed':
-        showToast(`Download failed: ${event.error}`);
-        loadDownloads();
-        break;
-      case 'queueChanged':
-        loadDownloads();
-        break;
-      case 'downloadProgress':
-        // Update specific download progress (could update UI more granularly)
-        loadDownloads();
-        break;
+    if (
+      event.type === 'downloadCompleted' ||
+      event.type === 'downloadFailed' ||
+      event.type === 'queueChanged' ||
+      event.type === 'downloadProgress'
+    ) {
+      loadDownloads();
     }
   }, []);
 
-  /**
-   * Delete a download
-   */
-  const handleDeleteDownload = async (download: TTSDownloadRow) => {
+  const handleDelete = async (download: TTSDownloadRow) => {
     try {
-      await ttsDownloadManager.deleteDownload(download.chapterId);
-      showToast('Download deleted');
+      if (download.status === 'completed' || download.status === 'failed') {
+        await ttsDownloadManager.deleteDownload(download.chapterId);
+      } else {
+        await ttsDownloadManager.cancelDownload(download.chapterId);
+      }
+      showToast('Download removed');
       loadDownloads();
     } catch (error) {
       console.error('[TTSDownloadsScreen] Delete failed:', error);
-      showToast('Failed to delete download');
+      showToast('Failed to remove download');
     }
   };
 
-  /**
-   * Cancel a download
-   */
-  const handleCancelDownload = async (download: TTSDownloadRow) => {
+  const handleClearAll = async () => {
     try {
-      await ttsDownloadManager.cancelDownload(download.chapterId);
-      showToast('Download cancelled');
+      await ttsDownloadManager.deleteAllDownloads();
+      showToast('All downloads cleared');
       loadDownloads();
     } catch (error) {
-      console.error('[TTSDownloadsScreen] Cancel failed:', error);
-      showToast('Failed to cancel download');
+      console.error('[TTSDownloadsScreen] Clear all failed:', error);
+      showToast('Failed to clear downloads');
     }
   };
 
-  /**
-   * Retry a failed download
-   */
-  const handleRetryDownload = async (download: TTSDownloadRow) => {
-    try {
-      // TODO: Implement retry - need to resubmit with original text elements
-      showToast('Retry not yet implemented');
-    } catch (error) {
-      console.error('[TTSDownloadsScreen] Retry failed:', error);
-      showToast('Failed to retry download');
-    }
-  };
-
-  /**
-   * Get status display text
-   */
   const getStatusText = (download: TTSDownloadRow): string => {
     switch (download.status) {
       case 'pending':
         return 'Pending';
-      case 'processing':
+      case 'processing': {
         const progress = download.totalElements > 0
           ? Math.round((download.downloadedElements / download.totalElements) * 100)
           : 0;
         return `Processing ${progress}%`;
+      }
       case 'completed':
         return `Completed • ${download.totalSizeMB?.toFixed(1)} MB`;
       case 'failed':
@@ -157,17 +119,10 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     }
   };
 
-  /**
-   * Get status color
-   */
   const getStatusColor = (status: string): string => {
     switch (status) {
       case 'completed':
         return theme.primary;
-      case 'processing':
-        return theme.onSurfaceVariant;
-      case 'pending':
-        return theme.onSurfaceVariant;
       case 'failed':
         return theme.error;
       default:
@@ -175,39 +130,38 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     }
   };
 
-  /**
-   * Render download item
-   */
   const renderDownloadItem = ({ item }: { item: TTSDownloadRow }) => {
     const statusText = getStatusText(item);
     const statusColor = getStatusColor(item.status);
     const createdDate = dayjs(item.createdAt).format('MMM D, YYYY');
 
     return (
-      <List.Item
-        title={`Chapter ${item.chapterId}`} // TODO: Get actual chapter name
-        description={`${statusText}\n${createdDate} • ${item.voiceName}`}
-        descriptionStyle={{ color: statusColor }}
-        onPress={() => {
-          // TODO: Navigate to chapter or show details
-        }}
-        onLongPress={() => {
-          if (item.status === 'completed') {
-            handleDeleteDownload(item);
-          } else if (item.status === 'processing' || item.status === 'pending') {
-            handleCancelDownload(item);
-          } else if (item.status === 'failed') {
-            handleRetryDownload(item);
-          }
-        }}
-        theme={theme}
-      />
+      <Swipeable
+        dragOffsetFromRightEdge={30}
+        renderRightActions={(_progress, _dragX, ref) => (
+          <View style={[styles.deleteAction, { backgroundColor: theme.error }]}>
+            <IconButtonV2
+              name="delete"
+              size={24}
+              color={'#fff'}
+              onPress={() => {
+                ref.close();
+                handleDelete(item);
+              }}
+              theme={theme}
+            />
+          </View>
+        )}
+      >
+        <List.Item
+          title={`Chapter ${item.chapterId}`}
+          description={`${statusText}\n${createdDate} • ${item.voiceName}`}
+          theme={theme}
+        />
+      </Swipeable>
     );
   };
 
-  /**
-   * List empty component
-   */
   const ListEmptyComponent = useCallback(
     () =>
       !loading ? (
@@ -219,25 +173,17 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     [loading],
   );
 
-  /**
-   * List header with stats
-   */
   const ListHeaderComponent = useCallback(() => {
-    if (stats.total === 0) {
-      return null;
-    }
-
+    if (stats.total === 0) return null;
     return (
       <View style={styles.statsContainer}>
-        <List.InfoText
-          text={`${stats.completed} completed • ${stats.processing} processing • ${stats.pending} pending`}
-          icon="information-outline"
+        <List.InfoItem
+          title={`${stats.completed} completed • ${stats.processing} processing • ${stats.pending} pending`}
           theme={theme}
         />
         {stats.totalSizeMB > 0 && (
-          <List.InfoText
-            text={`Total size: ${stats.totalSizeMB.toFixed(1)} MB`}
-            icon="database-outline"
+          <List.InfoItem
+            title={`Total size: ${stats.totalSizeMB.toFixed(1)} MB`}
             theme={theme}
           />
         )}
@@ -245,13 +191,9 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     );
   }, [stats, theme]);
 
-  /**
-   * Initialize and subscribe to events
-   */
   useEffect(() => {
     loadDownloads().finally(() => setLoading(false));
 
-    // Subscribe to download events
     ttsDownloadManager.on('downloadCompleted', handleDownloadEvent);
     ttsDownloadManager.on('downloadFailed', handleDownloadEvent);
     ttsDownloadManager.on('downloadProgress', handleDownloadEvent);
@@ -272,15 +214,20 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
         handleGoBack={navigation.goBack}
         theme={theme}
       >
+        <MaterialAppbar.Action
+          icon="refresh"
+          iconColor={theme.onSurface}
+          onPress={() => loadDownloads()}
+        />
         {stats.total > 0 && (
           <MaterialAppbar.Action
-            icon="refresh"
+            icon="delete-sweep"
             iconColor={theme.onSurface}
-            onPress={() => loadDownloads()}
+            onPress={() => setShowClearAllDialog(true)}
           />
         )}
       </Appbar>
-      
+
       <FlatList
         data={downloads}
         keyExtractor={(item) => item.id.toString()}
@@ -288,6 +235,15 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
         ListHeaderComponent={ListHeaderComponent}
         ListEmptyComponent={ListEmptyComponent}
         contentContainerStyle={styles.container}
+      />
+
+      <ConfirmationDialog
+        visible={showClearAllDialog}
+        title="Clear all downloads"
+        message="This will delete all downloaded TTS audio files. This cannot be undone."
+        onSubmit={handleClearAll}
+        onDismiss={() => setShowClearAllDialog(false)}
+        theme={theme}
       />
     </SafeAreaView>
   );
@@ -299,6 +255,11 @@ const styles = StyleSheet.create({
   },
   statsContainer: {
     padding: 16,
+  },
+  deleteAction: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 64,
   },
 });
 

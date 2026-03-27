@@ -32,6 +32,7 @@ import {
   getTTSDownloadById,
   deleteTTSDownload,
   getTTSDownload,
+  getTTSDownloadsByStatus,
 } from '@database/queries/TTSDownloadQueries';
 import { File, Directory, Paths } from 'expo-file-system';
 import { TTSDownloadRow } from '@database/schema';
@@ -639,6 +640,21 @@ class TTSDownloadManager extends EventEmitter {
    */
   async cleanupOldBlobs(olderThanDays: number = 7): Promise<void> {
     await azureBlobStorage.cleanupOldFiles(olderThanDays);
+  }
+
+  /**
+   * Delete all downloads (completed, failed, pending, processing)
+   */
+  async deleteAllDownloads(): Promise<void> {
+    const [completed, failed, pending, processing] = await Promise.all([
+      getTTSDownloadsByStatus('completed'),
+      getTTSDownloadsByStatus('failed'),
+      getPendingDownloads(),
+      getProcessingDownloads(),
+    ]);
+
+    const all = [...processing, ...pending, ...completed, ...failed];
+    await Promise.all(all.map(d => this.cancelDownload(d.chapterId)));
   }
 
   /**
