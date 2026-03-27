@@ -479,6 +479,17 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
     setChapterReaderSettings({ tts: { ...tts, engine } });
   }, [tts, setChapterReaderSettings]);
   
+  // Handle deleting/cancelling an existing download
+  const handleDeleteDownload = useCallback(async () => {
+    try {
+      await ttsDownloadManager.cancelDownload(chapter.id);
+      setDownloadStatus('none');
+      showToast('Download removed');
+    } catch (error: any) {
+      showToast(`Failed to remove download: ${error?.message || 'Unknown error'}`);
+    }
+  }, [chapter.id]);
+
   // Handle offline TTS download
   const handleDownloadChapter = useCallback(async () => {
     if (!webViewRef || !webViewRef.current) {
@@ -743,13 +754,22 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
                 
                 <View style={styles.downloadButtonContainer}>
                   <Button
-                    title={downloadStatus === 'none' || downloadStatus === 'failed' ? 'Download Chapter' : 'Already Downloaded'}
+                    title={downloadStatus === 'none' || downloadStatus === 'failed' ? 'Download Chapter' : 'Downloaded'}
                     mode={downloadStatus === 'none' || downloadStatus === 'failed' ? 'contained' : 'outlined'}
                     onPress={handleDownloadChapter}
                     disabled={isDownloading || downloadStatus === 'completed' || downloadStatus === 'processing' || downloadStatus === 'pending'}
                     loading={isDownloading}
                     style={styles.downloadButton}
                   />
+                  {downloadStatus !== 'none' && (
+                    <Button
+                      title={downloadStatus === 'processing' || downloadStatus === 'pending' ? 'Cancel' : 'Delete'}
+                      mode="outlined"
+                      onPress={handleDeleteDownload}
+                      style={styles.deleteButton}
+                      textColor={theme.error}
+                    />
+                  )}
                 </View>
               </View>
 
@@ -934,10 +954,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   downloadButtonContainer: {
+    flexDirection: 'row',
     paddingHorizontal: 16,
     paddingVertical: 8,
+    gap: 8,
   },
   downloadButton: {
-    alignSelf: 'stretch',
+    flex: 1,
+  },
+  deleteButton: {
+    alignSelf: 'center',
   },
 });
