@@ -471,7 +471,11 @@ class TTSDownloadManager extends EventEmitter {
     boundaries: SentenceBoundary[],
     textElements: string[]
   ): number[] {
-    const sentenceBoundaries = boundaries.filter(b => b.BoundaryType === 'Sentence');
+    // Azure batch synthesis uses "SentenceBoundary" (flat) or nested text.BoundaryType
+    const sentenceBoundaries = boundaries.filter(b => {
+      const type = b.BoundaryType ?? b.text?.BoundaryType ?? '';
+      return type === 'SentenceBoundary' || type === 'Sentence';
+    });
     if (sentenceBoundaries.length === 0) return [];
 
     const offsets: number[] = [];

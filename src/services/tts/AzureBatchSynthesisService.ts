@@ -63,10 +63,18 @@ export interface BatchJobResult {
   duration?: number; // Audio duration in seconds
 }
 
+// Azure batch synthesis JSON can emit boundaries in two shapes:
+// Flat:   { AudioOffset, BoundaryType: "SentenceBoundary", Text }
+// Nested: { AudioOffset, Duration, text: { BoundaryType: "SentenceBoundary", Text } }
 export interface SentenceBoundary {
   AudioOffset: number; // 100-nanosecond ticks
-  BoundaryType: string;
-  Text?: string;
+  Duration?: number;
+  BoundaryType?: string;          // flat format
+  Text?: string;                  // flat format
+  text?: {                        // nested format
+    BoundaryType: string;
+    Text?: string;
+  };
 }
 
 export interface DownloadResults {
@@ -322,10 +330,12 @@ ${ssmlEntries}
         .filter(f => f.uri.endsWith('.json'))
         .sort((a, b) => a.uri.localeCompare(b.uri));
 
+      console.log('[AzureBatchSynthesis] JSON files found:', jsonFiles.map(f => f.uri));
       if (jsonFiles.length > 0) {
         try {
           const jsonText = await jsonFiles[0].text();
           const parsed = JSON.parse(jsonText);
+          console.log('[AzureBatchSynthesis] First JSON entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
           if (Array.isArray(parsed)) {
             sentenceBoundaries = parsed as SentenceBoundary[];
           }
