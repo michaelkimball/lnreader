@@ -36,6 +36,16 @@ import {
 } from '@database/queries/TTSDownloadQueries';
 import { File, Directory, Paths } from 'expo-file-system';
 import { TTSDownloadRow } from '@database/schema';
+import NativeFile from '@specs/NativeFile';
+import { NOVEL_STORAGE } from '@utils/Storages';
+import { extractTextElementsFromHtml } from '@utils/tts/extractTextFromHtml';
+import { getMMKVObject } from '@utils/mmkv/mmkv';
+import {
+  INTEGRATION_SETTINGS,
+  CHAPTER_READER_SETTINGS,
+  IntegrationSettings,
+  ChapterReaderSettings,
+} from '@hooks/persisted/useSettings';
 
 // Event types
 export type DownloadEvent = 
@@ -581,6 +591,55 @@ class TTSDownloadManager extends EventEmitter {
 
     console.log('[TTSDownloadManager] Download cancelled:', chapterId);
     this.emitQueueChanged();
+  }
+
+  /**
+   * Queue TTS for a chapter whose text is already saved to disk.
+   * Reads the stored HTML file, checks prerequisites, and calls requestDownload.
+   * No-ops silently when:
+   * - TTS integration is not enabled / missing subscription key
+   * - No Microsoft voice is configured in reader settings
+   * - The chapter's HTML file doesn't exist
+   * - A TTS download already exists for this chapter
+   */
+  async requestDownloadFromStoredHtml(
+    chapterId: number,
+    novelId: number,
+    pluginId: string,
+  ): Promise<void> {
+    const integration = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+    if (
+      !integration?.microsoftSpeech?.enabled ||
+      !integration.microsoftSpeech.subscriptionKey
+    ) {
+      return;
+    }
+
+    const readerSettings = getMMKVObject<ChapterReaderSettings>(CHAPTER_READER_SETTINGS);
+    const voice = readerSettings?.tts?.microsoftVoice?.shortName;
+    if (!voice) return;
+
+    const existing = await getTTSDownload(chapterId);
+    if (existing) return;
+
+    const htmlPath = `${NOVEL_STORAGE}/${pluginId}/${novelId}/${chapterId}/index.html`;
+    if (!NativeFile.exists(htmlPath)) return;
+
+    const html = NativeFile.readFile(htmlPath);
+    const textElements = extractTextElementsFromHtml(html);
+    if (textElements.length === 0) return;
+
+    await this.requestDownload({
+      chapterId,
+      novelId,
+      textElements,
+      voiceSettings: {
+        voice,
+        rate: readerSettings?.tts?.rate ?? 1.0,
+        pitch: readerSettings?.tts?.pitch ?? 1.0,
+        engine: 'microsoft',
+      },
+    });
   }
 
   /**

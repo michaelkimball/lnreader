@@ -24,8 +24,11 @@ import { resolveUrl } from '@services/plugin/fetch';
 import {
   getAllUndownloadedAndUnreadChapters,
   getAllUndownloadedChapters,
+  getNovelDownloadedChapters,
   updateChapterProgressByIds,
 } from '@database/queries/ChapterQueries';
+import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
+import { useIntegrationSettings } from '@hooks/persisted';
 import { MaterialDesignIconName } from '@type/icon';
 import NovelScreenList from './components/NovelScreenList';
 import { ThemeColors } from '@theme/types';
@@ -53,6 +56,11 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
 
   const theme = useTheme();
   const { downloadChapters } = useDownload();
+  const { microsoftSpeech } = useIntegrationSettings();
+  const ttsAutoDownloadEnabled =
+    !!microsoftSpeech?.enabled &&
+    !!microsoftSpeech?.subscriptionKey &&
+    !!microsoftSpeech?.autoDownloadOnChapterDownload;
 
   const [selected, setSelected] = useState<ChapterInfo[]>([]);
   const [editInfoModal, showEditInfoModal] = useState(false);
@@ -69,33 +77,43 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
         return;
       }
 
-      let chaptersToUse = chapters;
+      let chaptersToDownload = chapters;
+      let alreadyDownloadedForTTS: ChapterInfo[] = [];
 
       if (amount === 'all') {
-        const allChapters = await getAllUndownloadedChapters(novel.id);
-        chaptersToUse = allChapters;
+        chaptersToDownload = await getAllUndownloadedChapters(novel.id);
+        if (ttsAutoDownloadEnabled) {
+          alreadyDownloadedForTTS = await getNovelDownloadedChapters(novel.id);
+        }
+      } else if (amount === 'unread') {
+        chaptersToDownload = await getAllUndownloadedAndUnreadChapters(novel.id);
+        if (ttsAutoDownloadEnabled) {
+          const downloaded = await getNovelDownloadedChapters(novel.id);
+          alreadyDownloadedForTTS = downloaded.filter(c => c.unread);
+        }
+      } else {
+        // numeric: take first N chapters from visible list
+        const range = chapters.slice(0, amount);
+        chaptersToDownload = range.filter(chapter => !chapter.isDownloaded);
+        if (ttsAutoDownloadEnabled) {
+          alreadyDownloadedForTTS = range.filter(chapter => chapter.isDownloaded);
+        }
       }
 
-      if (amount === 'unread') {
-        const allUnreadChapters = await getAllUndownloadedAndUnreadChapters(
-          novel.id,
-        );
-        chaptersToUse = allUnreadChapters;
+      if (chaptersToDownload.length > 0) {
+        downloadChapters(novel, chaptersToDownload);
       }
 
-      let filtered = chaptersToUse;
-
-      if (isNumber(amount)) {
-        filtered = filtered
-          .filter(chapter => !chapter.isDownloaded)
-          .slice(0, amount);
-      }
-
-      if (filtered.length > 0) {
-        downloadChapters(novel, filtered);
+      // Queue TTS for already-downloaded chapters that don't have TTS yet
+      for (const chapter of alreadyDownloadedForTTS) {
+        ttsDownloadManager
+          .requestDownloadFromStoredHtml(chapter.id, novel.id, novel.pluginId)
+          .catch(err =>
+            console.warn('[NovelScreen] TTS queue for downloaded chapter failed:', err),
+          );
       }
     },
-    [chapters, downloadChapters, novel],
+    [chapters, downloadChapters, novel, ttsAutoDownloadEnabled],
   );
 
   const deleteChs = useCallback(() => {
