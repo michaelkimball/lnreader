@@ -164,6 +164,24 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
               novel,
               selected.filter(chapter => !chapter.isDownloaded),
             );
+            if (ttsAutoDownloadEnabled) {
+              selected
+                .filter(chapter => chapter.isDownloaded)
+                .forEach(chapter =>
+                  ttsDownloadManager
+                    .requestDownloadFromStoredHtml(
+                      chapter.id,
+                      novel.id,
+                      novel.pluginId,
+                    )
+                    .catch(err =>
+                      console.warn(
+                        '[NovelScreen] TTS queue for selected chapter failed:',
+                        err,
+                      ),
+                    ),
+                );
+            }
           }
           setSelected([]);
         },
@@ -243,6 +261,7 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
     novel,
     refreshChapters,
     selected,
+    ttsAutoDownloadEnabled,
   ]);
 
   const setCustomNovelCover = useCallback(async () => {
