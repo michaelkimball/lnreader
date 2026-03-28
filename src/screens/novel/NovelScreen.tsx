@@ -24,7 +24,9 @@ import { resolveUrl } from '@services/plugin/fetch';
 import {
   getAllUndownloadedAndUnreadChapters,
   getAllUndownloadedChapters,
+  getDownloadStartAnchor,
   getNovelDownloadedChapters,
+  getUndownloadedChaptersFromAnchor,
   updateChapterProgressByIds,
 } from '@database/queries/ChapterQueries';
 import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
@@ -77,7 +79,7 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
         return;
       }
 
-      let chaptersToDownload = chapters;
+      let chaptersToDownload: ChapterInfo[] = [];
       let alreadyDownloadedForTTS: ChapterInfo[] = [];
 
       if (amount === 'all') {
@@ -92,11 +94,25 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
           alreadyDownloadedForTTS = downloaded.filter(c => c.unread);
         }
       } else {
-        // numeric: take first N chapters from visible list
-        const range = chapters.slice(0, amount);
-        chaptersToDownload = range.filter(chapter => !chapter.isDownloaded);
-        if (ttsAutoDownloadEnabled) {
-          alreadyDownloadedForTTS = range.filter(chapter => chapter.isDownloaded);
+        // numeric: start from after the last downloaded chapter, or if none
+        // exist, from after the last read chapter; fall back to the beginning
+        // of the visible list when the novel has no history at all.
+        const anchor = await getDownloadStartAnchor(novel.id);
+        if (anchor) {
+          chaptersToDownload = await getUndownloadedChaptersFromAnchor(
+            novel.id,
+            anchor,
+            amount,
+          );
+        } else {
+          chaptersToDownload = chapters
+            .filter(chapter => !chapter.isDownloaded)
+            .slice(0, amount);
+          if (ttsAutoDownloadEnabled) {
+            alreadyDownloadedForTTS = chapters
+              .filter(chapter => chapter.isDownloaded)
+              .slice(0, amount);
+          }
         }
       }
 
