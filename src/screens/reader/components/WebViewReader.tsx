@@ -481,15 +481,17 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
                 'queueLength:', ttsQueueRef.current.length, 
                 'currentIndex:', ttsQueueIndexRef.current);
     
-    // Save current TTS position from React Native state (not WebView, which might be destroyed)
-    if (isTTSReadingRef.current && ttsQueueRef.current.length > 0) {
-      const currentIndex = ttsQueueIndexRef.current;
-      const totalElements = ttsQueueRef.current.length;
+    // Save current TTS position from React Native state (not WebView, which might be destroyed).
+    // Gate on queue presence, NOT isTTSReadingRef — that flag is false when paused, so
+    // navigating away while paused would otherwise silently drop the position.
+    const currentIndex = ttsQueueIndexRef.current;
+    const totalElements = ttsQueueRef.current.length;
+    if (totalElements > 0 && currentIndex > 0) {
       const positionKey = getTTSPositionKey(chapter.id);
       setMMKVObject(positionKey, { position: currentIndex, total: totalElements });
       console.log('[WebViewReader] Saved TTS position on stop:', currentIndex, 'of', totalElements);
     } else {
-      console.log('[WebViewReader] NOT saving position - conditions not met');
+      console.log('[WebViewReader] NOT saving position - no active queue or at start (queueLength:', totalElements, 'currentIndex:', currentIndex, ')');
     }
     
     await ttsPlaybackManager.stop();

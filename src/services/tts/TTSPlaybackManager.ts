@@ -48,6 +48,9 @@ class TTSPlaybackManager extends EventEmitter {
   private isOfflineMode: boolean = false; // Track if playing from offline files
   private elementOffsets: number[] = []; // ms start time of each text element (offline mode)
   private lastEmittedElementIndex: number = -1;
+  // Guard flag: prevents multiple playCurrentElement() calls when preloader ready events
+  // fire rapidly (e.g. on second session where cache hits are instant). Reset by stop()/idle.
+  private hasAutoStarted: boolean = false;
 
   private constructor() {
     super();
@@ -96,11 +99,16 @@ class TTSPlaybackManager extends EventEmitter {
         console.log('[TTSPlaybackManager] Checking condition: state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex);
         
         const currentIndexReady = this.preloader.isAudioReady(this.currentIndex);
-        if (this.state === 'loading' && (event.index === this.currentIndex || currentIndexReady)) {
+        if (
+          this.state === 'loading' &&
+          !this.hasAutoStarted &&
+          (event.index === this.currentIndex || currentIndexReady)
+        ) {
+          this.hasAutoStarted = true;
           console.log('[TTSPlaybackManager] Auto-starting playback for index', this.currentIndex, '(triggered by ready event for index', event.index, ')');
           this.playCurrentElement();
         } else {
-          console.log('[TTSPlaybackManager] NOT auto-starting. state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex, 'currentIndexReady=', currentIndexReady);
+          console.log('[TTSPlaybackManager] NOT auto-starting. state=', this.state, 'hasAutoStarted=', this.hasAutoStarted, 'event.index=', event.index, 'currentIndex=', this.currentIndex, 'currentIndexReady=', currentIndexReady);
         }
       }
     });
@@ -478,6 +486,7 @@ class TTSPlaybackManager extends EventEmitter {
       this.isOfflineMode = false;
       this.elementOffsets = [];
       this.lastEmittedElementIndex = -1;
+      this.hasAutoStarted = false; // Reset so the next play() session can auto-start cleanly
       
       // Only emit queueEnd if this is a real stop (not from play())
       // Otherwise it triggers WebView tts.stop() which resets the WebView's queue

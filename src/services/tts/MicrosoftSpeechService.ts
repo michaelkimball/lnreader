@@ -8,7 +8,7 @@
  */
 
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 
 export interface MicrosoftVoice {
   name: string;
@@ -50,8 +50,10 @@ class MicrosoftSpeechService {
 
       this.config = config;
       this.isInitialized = true;
+      console.log(`[MicrosoftSpeechService] Initialized: region=${config.region}, voice=${config.voice || 'default'}`);
       return true;
-    } catch {
+    } catch (error) {
+      console.error(`[MicrosoftSpeechService] initialize() failed: ${error instanceof Error ? error.message : String(error)}`);
       this.isInitialized = false;
       return false;
     }
@@ -84,7 +86,8 @@ class MicrosoftSpeechService {
     }
 
     const endpoints = this.getEndpoints(this.config.region);
-    
+    console.log(`[MicrosoftSpeechService] Fetching access token from: ${endpoints.token}`);
+
     const response = await fetch(endpoints.token, {
       method: 'POST',
       headers: {
@@ -96,6 +99,7 @@ class MicrosoftSpeechService {
       throw new Error(`Failed to get access token: ${response.status} ${response.statusText}`);
     }
 
+    console.log('[MicrosoftSpeechService] Access token acquired');
     return await response.text();
   }
 
@@ -137,16 +141,22 @@ class MicrosoftSpeechService {
       throw new Error('Microsoft Speech service not initialized');
     }
 
+    const startTime = Date.now();
+    const textPreview = text.substring(0, 60).replace(/\n/g, ' ');
+    console.log(`[MicrosoftSpeechService] generateAudio: voice=${options.voice || 'default'}, pitch=${options.pitch}, rate=${options.rate}, text="${textPreview}"`);
+
     try {
       // Get access token
       const token = await this.getAccessToken();
 
       // Generate SSML
       const ssml = this.generateSSML(text, options);
+      console.log(`[MicrosoftSpeechService] SSML built (${ssml.length} chars)`);
 
       // Make TTS request
       const endpoints = this.getEndpoints(this.config!.region);
-      
+      console.log(`[MicrosoftSpeechService] POST ${endpoints.tts}`);
+
       const response = await fetch(endpoints.tts, {
         method: 'POST',
         headers: {
@@ -162,27 +172,21 @@ class MicrosoftSpeechService {
         throw new Error(`TTS request failed: ${response.status} - ${errorText}`);
       }
 
-      // Get audio as blob
+      // Get audio as ArrayBuffer and write as raw bytes (no base64 overhead)
       const arrayBuffer = await response.arrayBuffer();
-      
-      // Convert ArrayBuffer to base64
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binary);
+      console.log(`[MicrosoftSpeechService] Received ${arrayBuffer.byteLength} bytes of audio`);
 
-      // Save to temporary file
-      const tempFilePath = `${FileSystem.cacheDirectory}tts_ms_${Date.now()}.mp3`;
-      await FileSystem.writeAsStringAsync(tempFilePath, base64Audio, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // Use the new File API to write bytes directly — avoids base64 encode/decode
+      const tempFile = new File(Paths.cache, `tts_ms_${Date.now()}.mp3`);
+      tempFile.write(new Uint8Array(arrayBuffer));
 
-      // Return file path for later playback
-      return tempFilePath;
+      const duration = Date.now() - startTime;
+      console.log(`[MicrosoftSpeechService] generateAudio complete: uri=${tempFile.uri}, duration=${duration}ms`);
+
+      return tempFile.uri;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[MicrosoftSpeechService] generateAudio failed: ${errorMsg}`);
       throw new Error(`Microsoft Speech generation failed: ${errorMsg}`);
     }
   }
@@ -225,22 +229,14 @@ class MicrosoftSpeechService {
         throw new Error(`TTS request failed: ${response.status} - ${errorText}`);
       }
 
-      // Get audio as blob
+      // Get audio as raw bytes and write with new File API (no base64 overhead)
       const arrayBuffer = await response.arrayBuffer();
-      
-      // Convert ArrayBuffer to base64
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binary);
+      console.log(`[MicrosoftSpeechService] speak(): received ${arrayBuffer.byteLength} bytes of audio`);
 
-      // Save to temporary file
-      const tempFilePath = `${FileSystem.cacheDirectory}tts_${Date.now()}.mp3`;
-      await FileSystem.writeAsStringAsync(tempFilePath, base64Audio, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const tempFile = new File(Paths.cache, `tts_speak_${Date.now()}.mp3`);
+      tempFile.write(new Uint8Array(arrayBuffer));
+      const tempFilePath = tempFile.uri;
+      console.log(`[MicrosoftSpeechService] speak(): temp file written: ${tempFilePath}`);
 
       // Play audio using Expo AV
       const { sound } = await Audio.Sound.createAsync(
@@ -256,8 +252,8 @@ class MicrosoftSpeechService {
             }
             if (status.didJustFinish) {
               options.onDone?.();
-              // Clean up temp file
-              FileSystem.deleteAsync(tempFilePath, { idempotent: true }).catch(() => {});
+              // Clean up temp file using new File API
+              try { new File(tempFilePath).delete(); } catch {}
             }
           }
         },

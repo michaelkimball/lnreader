@@ -8,6 +8,81 @@ All bugs listed here have been **resolved**. This document preserves the root-ca
 
 ## Resolved Bugs
 
+### 9. Expo Engine Produces Unplayable Audio (Wrong Format + Malformed Path)
+
+**Symptom:** TTS with the Expo engine either produces silence or expo-av reports a load error. Manifests on first install and after clearing the cache.
+
+**Root Cause (three compounding bugs):**
+
+1. **Wrong file extension:** `getTempFilePath('expo')` was generating `.mp3` paths. Android's `TextToSpeech.synthesizeToFile()` always writes WAV audio regardless of the filename extension. expo-av rejected the WAV-data-in-an-mp3-file as an unsupported codec.
+
+2. **Malformed path passed to Kotlin:** `FileSystem.cacheDirectory` (legacy API) returns a `file:///data/...` URI. This was passed directly as `outputPath` to the Kotlin module, which passed it to `java.io.File(outputPath)`. `java.io.File` treats `file:///path` as a literal filename starting with `file:`, so it tried to create the file in the process working directory — failing silently.
+
+3. **Promise resolved before synthesis completes:** `synthesizeToFile()` on Android is asynchronous. `ERROR_SUCCESS` from the API means the job was queued, not that the file has been written. The original code slept 100ms and resolved the promise, causing expo-av to try to load an empty or partial WAV file for longer texts.
+
+**Solution:**
+
+- `ENGINE_CONFIGS` record maps each engine to its actual output extension (`'wav'` for expo, `'mp3'` for microsoft). `getTempFilePath` derives the extension from this record — no hard-coded strings.
+- All file path construction migrated from string concatenation to `new File(Paths.cache, filename).uri` (new expo-file-system API), which always produces well-formed `file://` URIs.
+- `MicrosoftSpeechService` migrated from `expo-file-system/legacy` import to `expo-file-system` main export. Audio written as raw bytes via `file.write(new Uint8Array(arrayBuffer))` — no base64 encoding round-trip.
+- Kotlin `NativeExpoSpeechModule`: `outputPath` parsed via `java.net.URI(outputPath).path` to extract the real filesystem path. `Thread.sleep(100) + promise.resolve()` replaced with storing the promise in a `ConcurrentHashMap<utteranceId, Pair<Promise, File>>` and resolving inside `UtteranceProgressListener.onDone()`. Both `onError` overloads reject the pending promise.
+
+**Key Rule:** Android TTS always writes WAV. Never name the output file `.mp3`. Always pass a plain filesystem path (not a `file://` URI) to `java.io.File`.
+
+---
+
+### 10. Overlapping Voices on Second Play Session (Cache-Warm Race)
+
+**Symptom:** On the second play session (after navigate away/back), two or more overlapping voices play the first element simultaneously. After the overlapping stops, playback appears to jump to the middle of the chapter.
+
+**Root Cause:** On the second session all audio is already cached. Cache hits are effectively instant (~10ms), so all 5 priority preload elements emit `'ready'` events within ~100ms — all while `state === 'loading'`. The auto-start condition in `setupPreloaderListeners` checked `state === 'loading'` but had no guard against firing more than once. `playCurrentElement()` was called 5+ times in rapid succession, creating 5 `Audio.Sound` instances all playing element 0.
+
+The apparent mid-chapter "skip" was a perceptual artifact: 5 overlapping audio tracks finishing at different times collapsed the perceived timeline, making sequential playback sound like a jump.
+
+**Solution:** Added `private hasAutoStarted: boolean = false` to `TTSPlaybackManager`. The auto-start condition now also checks `!this.hasAutoStarted` and immediately sets it to `true` before calling `playCurrentElement()`. `stop()` resets it to `false` so the next session starts clean.
+
+```typescript
+if (this.state === 'loading' && !this.hasAutoStarted && (event.index === this.currentIndex || currentIndexReady)) {
+  this.hasAutoStarted = true;
+  this.playCurrentElement();
+}
+```
+
+**Key Rule:** Any condition that should fire exactly once must be guarded by a boolean flag, not just a state check. State transitions are not atomic when multiple events arrive within one JS task queue turn.
+
+---
+
+### 11. `FileAlreadyExistsException` When Caching Audio on Second Session
+
+**Symptom:** Error toast appears on the first play after hot reload or on second session. Logs show `TTSCacheManager set() failed: FileAlreadyExistsException`.
+
+**Root Cause (two parts):**
+
+1. **Initialization race:** `TTSCacheManager` constructor called `initialize()` as a fire-and-forget async call. If playback started before `loadMetadata()` completed, the in-memory map was empty. `get()` missed, TTS regenerated audio, and `set()` tried to copy the new file onto one that already existed from the previous session. `File.copy()` in the new expo-file-system API throws if the destination exists (no overwrite option).
+
+2. **URI scheme mismatch:** Kotlin's `file.toURI().toString()` returns `file:/path` (one slash). expo-file-system uses `file:///path` (three slashes). The `uri.startsWith(this.cacheDir)` check in `set()` always returned `false` for Kotlin-sourced URIs, so the copy path was always taken even for files legitimately in the cache directory under a different URI form.
+
+**Solution:**
+
+- Constructor now assigns `this.ready = this.initialize()` (captured, not discarded). Every public method (`get`, `set`, `has`, `delete`, `clear`) begins with `await this.ready`, blocking until metadata is loaded. Subsequent calls resolve immediately since the promise is already settled.
+- Before calling `sourceFile.copy(cachedFile)`, `set()` checks `cachedFile.exists`. If the destination already exists, the copy is skipped and the existing file is reused silently. This makes `set()` idempotent regardless of the URI scheme mismatch.
+
+---
+
+### 12. Position Not Saved When Navigating Away While Paused
+
+**Symptom:** TTS plays a few elements, user navigates away (while TTS is paused or mid-element), returns to the chapter, presses play — playback restarts from the last persisted position (often position 1 from a previous session) rather than where it was.
+
+**Root Cause:** `stopTTS()` gated the MMKV position save on `isTTSReadingRef.current`. `handleStateChange` sets `isTTSReadingRef.current = isPlaying || isLoading` — which evaluates to `false` when paused. Navigating away while paused therefore skipped the save silently.
+
+**Solution:** Changed the save condition from `isTTSReadingRef.current && queue.length > 0` to `queue.length > 0 && currentIndex > 0`.
+
+- `ttsQueueRef` is cleared only by the WebView's `stop-speak` event (explicit user stop) and chapter completion — not by pause. So a non-empty queue correctly signals "TTS was active in this session".
+- `currentIndex > 0` avoids writing a useless position-0 save (the default start is always 0, so there is nothing to restore).
+- `isTTSReadingRef` removed from the condition entirely — it is too volatile (paused = false) to use as a gate for persistence.
+
+---
+
 ### 1. Stop() Cascade
 
 **Symptom:** `stop()` called 50+ times in rapid succession, creating hundreds of timers. App becomes unresponsive. "reactInstance is null. Dropping work" errors in logcat.
