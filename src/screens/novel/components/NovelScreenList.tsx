@@ -33,7 +33,7 @@ import { useNovelContext } from '../NovelContext';
 import { LegendList, LegendListRef } from '@legendapp/list';
 import FileManager from '@specs/NativeFile';
 import { downloadFile } from '@plugins/helpers/fetch';
-import { StorageAccessFramework } from 'expo-file-system/legacy';
+import { Directory } from 'expo-file-system';
 import PagePaginationControl from './PagePaginationControl';
 
 type NovelScreenListProps = {
@@ -320,12 +320,17 @@ const NovelScreenList = ({
       showToast(getString('novelScreen.noCoverFound'));
       return;
     }
-    const permissions =
-      await StorageAccessFramework.requestDirectoryPermissionsAsync();
-    if (!permissions.granted) {
+
+    // Let the user pick a destination directory via SAF.
+    // pickDirectoryAsync() throws if the user cancels the picker.
+    let pickedDirectory: Directory;
+    try {
+      pickedDirectory = await Directory.pickDirectoryAsync();
+    } catch {
       showToast(getString('novelScreen.coverNotSaved'));
       return;
     }
+
     const cover = novel.cover;
     let tempCoverUri: string | null = null;
     try {
@@ -341,8 +346,9 @@ const NovelScreenList = ({
 
       const novelName = novel.name.replace(/[^a-zA-Z0-9]/g, '_');
       const fileName = `${novelName}_${novel.id}.${imageExtension}`;
-      const coverDestUri = await StorageAccessFramework.createFileAsync(
-        permissions.directoryUri,
+      // createFile() creates the file inside the SAF directory and returns a
+      // File whose .uri is the content:// URI we can copy into.
+      const destFile = pickedDirectory.createFile(
         fileName,
         'image/' + imageExtension,
       );
@@ -350,9 +356,9 @@ const NovelScreenList = ({
         const { ExternalCachesDirectoryPath } = FileManager.getConstants();
         tempCoverUri = ExternalCachesDirectoryPath + '/' + fileName;
         await downloadFile(cover, tempCoverUri);
-        FileManager.copyFile(tempCoverUri, coverDestUri);
+        FileManager.copyFile(tempCoverUri, destFile.uri);
       } else {
-        FileManager.copyFile(cover, coverDestUri);
+        FileManager.copyFile(cover, destFile.uri);
       }
       showToast(getString('novelScreen.coverSaved'));
     } catch (err: any) {

@@ -14,8 +14,9 @@
 - **Linting**: ESLint 8.57.1 with @react-native/eslint-config
 - **Formatting**: Prettier 2.8.8
 - **Build**: Gradle with Kotlin 2.1.20
-- **Native Modules**: C++ (Epub processing via pugixml)
+- **Native Modules**: C++ (Epub processing via pugixml), Kotlin (TTS foreground service, media controls)
 - **State Management**: React Context API with MMKV for persistence
+- **TTS**: Android foreground service + expo-av + Azure Speech (real-time + batch synthesis)
 
 ---
 
@@ -159,10 +160,15 @@ lnreader/
 │   ├── navigators/        # React Navigation setup
 │   ├── plugins/           # Content source plugins
 │   ├── screens/           # Screen components
-│   ├── services/          # Business logic (backup, downloads, updates)
+│   ├── services/
+│   │   ├── tts/           # TTS: TTSPlaybackManager, TTSAudioGenerator, cache, downloads
+│   │   └── ...            # backup, downloads, updates
 │   ├── theme/             # Theming system
 │   ├── type/              # TypeScript type definitions
 │   └── utils/             # Utility functions
+├── docs/
+│   ├── tts/               # TTS system documentation (see docs/tts/README.md)
+│   └── WSL-SETUP.md       # WSL development environment setup
 ├── strings/               # i18n translations (Crowdin managed)
 ├── App.tsx                # Root component
 ├── index.js               # Entry point (RTL setup, expo registration)
@@ -267,6 +273,59 @@ If linting fails, commit will be blocked. Fix issues before committing.
 - `src/navigators/Main.tsx:66` - Hack to allow database initialization time
 - `src/database/queries/ChapterQueries.ts:189` - TODO: Remove chapters array dependency for deletion
 - `src/services/backup/local/index.ts:104` - TODO: Verify allowVirtualFiles behavior
+- `src/screens/more/TTSDownloadsScreen.tsx` - TODO: Display chapter names (currently shows chapter ID)
+
+---
+
+## TTS System
+
+See `docs/tts/` for all documentation.
+
+### Documentation Map
+
+| Document | What It Covers |
+|---|---|
+| [docs/tts/README.md](../docs/tts/README.md) | Doc map, source file index, quick question guide |
+| [docs/tts/architecture.md](../docs/tts/architecture.md) | Full layer diagram, data flow, engine routing, component responsibilities |
+| [docs/tts/playback-engine.md](../docs/tts/playback-engine.md) | TTSPlaybackManager state machine, expo-av, preloader, foreground service, position resumption |
+| [docs/tts/audio-generation.md](../docs/tts/audio-generation.md) | TTSAudioGenerator, MicrosoftSpeechService (Azure), NativeExpoSpeech, LRU cache |
+| [docs/tts/offline-downloads.md](../docs/tts/offline-downloads.md) | Azure Batch Synthesis, AzureBlobStorage, TTSDownloadManager, DB schema |
+| [docs/tts/webview-integration.md](../docs/tts/webview-integration.md) | core.js TTS engine, WebViewReader bridge, event protocol, position save/restore |
+| [docs/tts/known-bugs-and-patterns.md](../docs/tts/known-bugs-and-patterns.md) | All resolved bugs, state patterns, build gotchas |
+
+### Key TTS Files
+
+```
+src/services/tts/
+  TTSPlaybackManager.ts        # Singleton playback orchestrator
+  TTSAudioPreloader.ts         # Progressive look-ahead audio generation
+  TTSAudioGenerator.ts         # Unified engine factory (expo + microsoft)
+  TTSCacheManager.ts           # LRU FileSystem cache (100MB)
+  MicrosoftSpeechService.ts    # Azure Speech REST API
+  EventEmitter.ts              # Custom (Node.js 'events' not available in RN)
+  AzureBlobStorage.ts          # Upload SSML for batch synthesis
+  AzureBatchSynthesisService.ts  # Batch job submission and polling
+  TTSDownloadManager.ts        # Offline download orchestration
+
+specs/
+  NativeTTSForegroundService.ts  # Turbo Module spec
+  NativeExpoSpeech.ts            # Turbo Module spec
+
+src/screens/
+  reader/components/WebViewReader.tsx  # React Native ↔ WebView bridge
+  more/TTSDownloadsScreen.tsx          # Download management UI
+
+android/.../js/core.js  # WebView TTS engine (DOM traversal, element queue)
+```
+
+### Critical TTS Rules
+
+1. **Never call `tts.stop()` in WebView between elements** — destroys the element queue
+2. **Use `fromPlay=true` when `stop()` is called from within `play()`** — prevents `queueEnd` feedback loop
+3. **Only `handleQueueEnd` should inject `tts.next()`** — not `handleElementChange`
+4. **Position resume requires dual-condition check**: `isServiceRunning && savedState` (not either alone)
+5. **Track unmount-critical state in React refs**, not component state (WebView is destroyed on unmount)
+6. **Audio files use `expo-file-system`, not MMKV** (MMKV is for metadata/position only)
 
 ---
 
@@ -289,11 +348,13 @@ If linting fails, commit will be blocked. Fix issues before committing.
 
 **When making changes**:
 1. Run `pnpm run lint` to verify no new ESLint errors (warnings OK)
-2. Run `pnpm run test` to ensure all 199 tests still pass
+2. Run `pnpm run test` to ensure all tests still pass
 3. For database changes, generate migration: `pnpm run generate:db-migration`
 4. Do NOT run `pnpm run type-check` as validation - it currently has known failures
 
 **What MUST pass for PR approval**:
 - ✅ ESLint (no errors, warnings acceptable)
-- ✅ Jest tests (all 199 passing)
+- ✅ Jest tests (all passing)
 - ❌ Type check is disabled - ignore type errors for now
+
+**TTS changes**: Read `docs/tts/README.md` first before making any modifications.

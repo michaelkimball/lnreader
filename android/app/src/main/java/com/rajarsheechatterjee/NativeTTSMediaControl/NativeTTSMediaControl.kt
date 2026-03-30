@@ -48,6 +48,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
 
     private val mediaReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            android.util.Log.d("NativeTTSMediaControl", "BroadcastReceiver received: ${intent.action}")
             when (intent.action) {
                 ACTION_PLAY -> {
                     isPlaying = true
@@ -62,7 +63,10 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
                 ACTION_STOP -> sendEvent("TTSStop")
                 ACTION_PREV -> sendEvent("TTSPrev")
                 ACTION_NEXT -> sendEvent("TTSNext")
-                ACTION_REWIND -> sendEvent("TTSRewind")
+                ACTION_REWIND -> {
+                    android.util.Log.d("NativeTTSMediaControl", "Sending TTSRewind event")
+                    sendEvent("TTSRewind")
+                }
             }
         }
     }
@@ -105,39 +109,108 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
         if (mediaSession == null) {
             mediaSession = MediaSessionCompat(appContext, "LNReaderTTS").apply {
                 setCallback(object : MediaSessionCompat.Callback() {
+                    override fun onMediaButtonEvent(mediaButtonEvent: android.content.Intent?): Boolean {
+                        val keyEvent = mediaButtonEvent?.getParcelableExtra<android.view.KeyEvent>(android.content.Intent.EXTRA_KEY_EVENT)
+                        android.util.Log.d("BTN", "▶▶▶ RAW MEDIA BUTTON: action=${
+                            when (keyEvent?.action) {
+                                android.view.KeyEvent.ACTION_DOWN -> "DOWN"
+                                android.view.KeyEvent.ACTION_UP -> "UP"
+                                else -> keyEvent?.action?.toString() ?: "null"
+                            }
+                        } keyCode=${
+                            when (keyEvent?.keyCode) {
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> "PLAY"
+                                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> "PAUSE"
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> "PLAY_PAUSE"
+                                android.view.KeyEvent.KEYCODE_MEDIA_STOP -> "STOP"
+                                android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> "NEXT"
+                                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> "PREVIOUS"
+                                else -> keyEvent?.keyCode?.toString() ?: "null"
+                            }
+                        } repeatCount=${keyEvent?.repeatCount} isPlaying=$isPlaying")
+
+                        // Some headphones send PLAY as ACTION_UP — Android's default only routes ACTION_DOWN,
+                        // so we manually dispatch UP events for play-like keys here.
+                        if (keyEvent?.action == android.view.KeyEvent.ACTION_UP) {
+                            when (keyEvent.keyCode) {
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                                    if (!isPlaying) {
+                                        android.util.Log.d("BTN", "UP PLAY → manually calling onPlay()")
+                                        onPlay()
+                                        return true
+                                    }
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                                    if (!isPlaying) {
+                                        android.util.Log.d("BTN", "UP PLAY_PAUSE (paused) → manually calling onPlay()")
+                                        onPlay()
+                                    } else {
+                                        android.util.Log.d("BTN", "UP PLAY_PAUSE (playing) → manually calling onPause()")
+                                        onPause()
+                                    }
+                                    return true
+                                }
+                                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                                    if (isPlaying) {
+                                        android.util.Log.d("BTN", "UP PAUSE → manually calling onPause()")
+                                        onPause()
+                                        return true
+                                    }
+                                }
+                            }
+                        }
+                        return super.onMediaButtonEvent(mediaButtonEvent)
+                    }
+
                     override fun onPlay() {
+                        android.util.Log.d("BTN", "onPlay() — isPlaying was $isPlaying")
                         isPlaying = true
                         sendEvent("TTSPlay")
                         updateNotification()
                     }
 
                     override fun onPause() {
+                        android.util.Log.d("BTN", "onPause() — isPlaying was $isPlaying")
                         isPlaying = false
                         sendEvent("TTSPause")
                         updateNotification()
                     }
 
                     override fun onStop() {
+                        android.util.Log.d("BTN", "onStop() — isPlaying was $isPlaying")
                         sendEvent("TTSStop")
                     }
 
                     override fun onSkipToPrevious() {
+                        android.util.Log.d("BTN", "onSkipToPrevious()")
                         sendEvent("TTSPrev")
                     }
 
                     override fun onSkipToNext() {
+                        android.util.Log.d("BTN", "onSkipToNext()")
                         sendEvent("TTSNext")
                     }
 
+                    override fun onRewind() {
+                        android.util.Log.d("BTN", "onRewind()")
+                        sendEvent("TTSRewind")
+                    }
+
                     override fun onSeekTo(pos: Long) {
-                        // pos is in our scaled ms domain: elementIndex * 1000
+                        android.util.Log.d("BTN", "onSeekTo($pos)")
                         val elementIndex = pos / 1000L
                         currentPosition = elementIndex
                         updateNotification()
                         sendSeekEvent(elementIndex)
                     }
                 })
+                // Enable bluetooth and external media button support
+                setFlags(
+                    MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+                    MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+                )
                 isActive = true
+                android.util.Log.d("NativeTTSMediaControl", "MediaSession created and activated with bluetooth support")
             }
         }
     }
@@ -187,16 +260,19 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
 
         val stateBuilder = PlaybackStateCompat.Builder()
             .setActions(
+                PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
                 PlaybackStateCompat.ACTION_PLAY_PAUSE or
                 PlaybackStateCompat.ACTION_STOP or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_REWIND or
                 PlaybackStateCompat.ACTION_SEEK_TO
             )
             .setState(
                 if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED,
                 currentPosition * 1000L,
-                0f
+                if (isPlaying) 1f else 0f
             )
         session.setPlaybackState(stateBuilder.build())
 
@@ -257,7 +333,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
             .setStyle(
                 MediaStyle()
                     .setMediaSession(session.sessionToken)
-                    .setShowActionsInCompactView(1, 2, 3)
+                    .setShowActionsInCompactView(0, 2, 3) // Previous, Play/Pause, Next
             )
             .build()
 
@@ -325,6 +401,7 @@ class NativeTTSMediaControl(private val appContext: ReactApplicationContext) :
     }
 
     override fun dismiss() {
+        android.util.Log.d("NativeTTSMediaControl", "dismiss() called - releasing MediaSession and canceling notification")
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null

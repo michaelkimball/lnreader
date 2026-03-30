@@ -144,6 +144,7 @@ window.tts = new (function () {
   this.totalElements = 0;
   this.allReadableElements = []; // Store all readable elements at start
   this.textQueue = []; // Flat list of normalized text for native fallback
+  this.elementIndexMap = []; // Maps textQueue index → allReadableElements index
 
   this.readable = element => {
     const ele = element ?? this.currentElement;
@@ -280,6 +281,8 @@ window.tts = new (function () {
       if (autoPageAdvance && hasNextChapter) {
         reader.post({ type: 'next', autoStartTTS: true });
       } else {
+        // Chapter complete - clear saved position
+        reader.post({ type: 'clear-tts-position' });
         this.stop();
         const controller = document.getElementById('TTS-Controller');
         if (controller?.firstElementChild) {
@@ -303,14 +306,23 @@ window.tts = new (function () {
       reader.chapterElement,
     );
     this.totalElements = this.allReadableElements.length;
-    this.textQueue = this.allReadableElements
-      .map(el => this.normalizeText(el.innerText))
-      .filter(text => !!text);
+    const textQueue = [];
+    const elementIndexMap = [];
+    this.allReadableElements.forEach((el, i) => {
+      const text = this.normalizeText(el.innerText);
+      if (text) {
+        textQueue.push(text);
+        elementIndexMap.push(i);
+      }
+    });
+    this.textQueue = textQueue;
+    this.elementIndexMap = elementIndexMap;
     reader.post({
       type: 'tts-queue',
       data: {
         queue: this.textQueue,
         startIndex: this.elementsRead,
+        indexMap: this.elementIndexMap,
       },
     });
 
@@ -318,6 +330,11 @@ window.tts = new (function () {
     if (element && element !== reader.chapterElement) {
       const startIndex = this.allReadableElements.indexOf(element);
       this.elementsRead = startIndex >= 0 ? startIndex : 0;
+    } else if (this.savedPosition && this.savedPosition > 0 && this.savedPosition < this.totalElements) {
+      // Resume from saved position
+      console.log("[WebView] Resuming TTS from saved position:", this.savedPosition);
+      this.elementsRead = this.savedPosition;
+      this.savedPosition = null; // Clear after using
     } else {
       this.elementsRead = 0;
     }
@@ -465,10 +482,13 @@ window.tts = new (function () {
     this.currentElement.classList.add('highlight');
     const text = this.normalizeText(this.currentElement.innerText);
     if (text) {
+      const allReadableIdx = this.elementsRead - 1;
+      const textIdx = this.elementIndexMap.indexOf(allReadableIdx);
       reader.post({
         type: 'speak',
         data: text,
-        index: this.elementsRead - 1,
+        index: allReadableIdx,
+        textIndex: textIdx >= 0 ? textIdx : allReadableIdx,
         total: this.totalElements,
       });
       reader.post({ type: 'tts-state', data: { isReading: true } });

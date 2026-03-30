@@ -8,7 +8,8 @@
  */
 
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
+import { ttsLog } from '@utils/logger';
 
 export interface MicrosoftVoice {
   name: string;
@@ -50,9 +51,10 @@ class MicrosoftSpeechService {
 
       this.config = config;
       this.isInitialized = true;
+      ttsLog.debug(`[MicrosoftSpeechService] Initialized: region=${config.region}, voice=${config.voice || 'default'}`);
       return true;
     } catch (error) {
-      console.error('[MSSpeech] Initialization failed:', error);
+      ttsLog.error(`[MicrosoftSpeechService] initialize() failed: ${error instanceof Error ? error.message : String(error)}`);
       this.isInitialized = false;
       return false;
     }
@@ -85,7 +87,8 @@ class MicrosoftSpeechService {
     }
 
     const endpoints = this.getEndpoints(this.config.region);
-    
+    ttsLog.debug(`[MicrosoftSpeechService] Fetching access token from: ${endpoints.token}`);
+
     const response = await fetch(endpoints.token, {
       method: 'POST',
       headers: {
@@ -97,6 +100,7 @@ class MicrosoftSpeechService {
       throw new Error(`Failed to get access token: ${response.status} ${response.statusText}`);
     }
 
+    ttsLog.debug('[MicrosoftSpeechService] Access token acquired');
     return await response.text();
   }
 
@@ -130,12 +134,70 @@ class MicrosoftSpeechService {
   }
 
   /**
+   * Generate audio file from text without playing (for new architecture)
+   * Returns the file path for later playback with expo-av
+   */
+  async generateAudio(text: string, options: Omit<SpeakOptions, 'onStart' | 'onDone' | 'onError'> = {}): Promise<string> {
+    if (!this.isReady()) {
+      throw new Error('Microsoft Speech service not initialized');
+    }
+
+    const startTime = Date.now();
+    const textPreview = text.substring(0, 60).replace(/\n/g, ' ');
+    ttsLog.debug(`[MicrosoftSpeechService] generateAudio: voice=${options.voice || 'default'}, pitch=${options.pitch}, rate=${options.rate}, text="${textPreview}"`);
+
+    try {
+      // Get access token
+      const token = await this.getAccessToken();
+
+      // Generate SSML
+      const ssml = this.generateSSML(text, options);
+      ttsLog.debug(`[MicrosoftSpeechService] SSML built (${ssml.length} chars)`);
+
+      // Make TTS request
+      const endpoints = this.getEndpoints(this.config!.region);
+      ttsLog.debug(`[MicrosoftSpeechService] POST ${endpoints.tts}`);
+
+      const response = await fetch(endpoints.tts, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/ssml+xml',
+          'X-Microsoft-OutputFormat': 'audio-16khz-128kbitrate-mono-mp3',
+        },
+        body: ssml,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`TTS request failed: ${response.status} - ${errorText}`);
+      }
+
+      // Get audio as ArrayBuffer and write as raw bytes (no base64 overhead)
+      const arrayBuffer = await response.arrayBuffer();
+      ttsLog.debug(`[MicrosoftSpeechService] Received ${arrayBuffer.byteLength} bytes of audio`);
+
+      // Use the new File API to write bytes directly — avoids base64 encode/decode
+      const tempFile = new File(Paths.cache, `tts_ms_${Date.now()}.mp3`);
+      tempFile.write(new Uint8Array(arrayBuffer));
+
+      const duration = Date.now() - startTime;
+      ttsLog.debug(`[MicrosoftSpeechService] generateAudio complete: uri=${tempFile.uri}, duration=${duration}ms`);
+
+      return tempFile.uri;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      ttsLog.error(`[MicrosoftSpeechService] generateAudio failed: ${errorMsg}`);
+      throw new Error(`Microsoft Speech generation failed: ${errorMsg}`);
+    }
+  }
+
+  /**
    * Speak text using Microsoft Speech REST API
    */
   async speak(text: string, options: SpeakOptions = {}): Promise<void> {
     if (!this.isReady()) {
       const error = 'Microsoft Speech service not initialized';
-      console.error('[MSSpeech]', error);
       options.onError?.(error);
       throw new Error(error);
     }
@@ -168,22 +230,14 @@ class MicrosoftSpeechService {
         throw new Error(`TTS request failed: ${response.status} - ${errorText}`);
       }
 
-      // Get audio as blob
+      // Get audio as raw bytes and write with new File API (no base64 overhead)
       const arrayBuffer = await response.arrayBuffer();
-      
-      // Convert ArrayBuffer to base64
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64Audio = btoa(binary);
+      ttsLog.debug(`[MicrosoftSpeechService] speak(): received ${arrayBuffer.byteLength} bytes of audio`);
 
-      // Save to temporary file
-      const tempFilePath = `${FileSystem.cacheDirectory}tts_${Date.now()}.mp3`;
-      await FileSystem.writeAsStringAsync(tempFilePath, base64Audio, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const tempFile = new File(Paths.cache, `tts_speak_${Date.now()}.mp3`);
+      tempFile.write(new Uint8Array(arrayBuffer));
+      const tempFilePath = tempFile.uri;
+      ttsLog.debug(`[MicrosoftSpeechService] speak(): temp file written: ${tempFilePath}`);
 
       // Play audio using Expo AV
       const { sound } = await Audio.Sound.createAsync(
@@ -198,10 +252,9 @@ class MicrosoftSpeechService {
               }
             }
             if (status.didJustFinish) {
-              console.log('[MSSpeech] Playback completed');
               options.onDone?.();
-              // Clean up temp file
-              FileSystem.deleteAsync(tempFilePath, { idempotent: true }).catch(console.error);
+              // Clean up temp file using new File API
+              try { new File(tempFilePath).delete(); } catch {}
             }
           }
         },
@@ -214,7 +267,6 @@ class MicrosoftSpeechService {
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error('[MSSpeech] Speak error:', errorMsg);
       options.onError?.(errorMsg);
       throw error;
     }
@@ -228,8 +280,8 @@ class MicrosoftSpeechService {
       try {
         await this.currentSound.stopAsync();
         await this.currentSound.unloadAsync();
-      } catch (error) {
-        console.error('[MSSpeech] Error stopping audio:', error);
+      } catch {
+        // Ignore errors during cleanup
       }
       this.currentSound = null;
     }
@@ -276,7 +328,6 @@ class MicrosoftSpeechService {
         shortName: voice.ShortName,
       }));
     } catch (error) {
-      console.error('[MSSpeech] Failed to get voices:', error);
       throw error;
     }
   }
@@ -296,8 +347,7 @@ class MicrosoftSpeechService {
       });
 
       return response.ok;
-    } catch (error) {
-      console.error('[MSSpeech] Credential validation failed:', error);
+    } catch {
       return false;
     }
   }

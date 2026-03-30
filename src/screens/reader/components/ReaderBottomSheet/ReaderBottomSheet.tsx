@@ -32,6 +32,8 @@ import { overlay } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomSheetModalMethods } from '@gorhom/bottom-sheet/lib/typescript/types';
 import { StringMap } from '@strings/types';
+import { ChapterInfo, NovelInfo } from '@database/types';
+import WebView from 'react-native-webview';
 
 type TabViewLabelProps = {
   route: {
@@ -126,6 +128,9 @@ const GeneralTab: React.FC = React.memo(() => {
 
 interface ReaderBottomSheetV2Props {
   bottomSheetRef: RefObject<BottomSheetModalMethods | null>;
+  novel: NovelInfo;
+  chapter: ChapterInfo;
+  webViewRef: RefObject<WebView | null>;
 }
 
 const routes = [
@@ -136,6 +141,9 @@ const routes = [
 
 const ReaderBottomSheetV2: React.FC<ReaderBottomSheetV2Props> = ({
   bottomSheetRef,
+  novel,
+  chapter,
+  webViewRef,
 }) => {
   const theme = useTheme();
   const { bottom, left, right } = useSafeAreaInsets();
@@ -144,9 +152,18 @@ const ReaderBottomSheetV2: React.FC<ReaderBottomSheetV2Props> = ({
   const tabHeaderColor = overlay(2, theme.surface);
   const backgroundColor = tabHeaderColor;
 
+  // Create TTSTab with props to avoid context issues
+  const TTSTabWithProps = useCallback(() => (
+    <TTSTab novel={novel} chapter={chapter} webViewRef={webViewRef} />
+  ), [novel, chapter, webViewRef]);
+
   const renderScene = useMemo(
-    () => SceneMap({ readerTab: ReaderTab, generalTab: GeneralTab, ttsTab: TTSTab }),
-    [],
+    () => SceneMap({ 
+      readerTab: ReaderTab, 
+      generalTab: GeneralTab, 
+      ttsTab: TTSTabWithProps 
+    }),
+    [TTSTabWithProps],
   );
 
   const [index, setIndex] = useState(0);

@@ -21,6 +21,7 @@ type UpdateCardProps = {
   onlyDownloadedChapters?: boolean;
   descriptionText: string;
   deleteChapter: (chapter: Update | DownloadedChapter) => void;
+  ttsDownloadIds?: Set<number>;
 } & (
   | { chapterList: Update[] | DownloadedChapter[]; chapterListInfo?: undefined }
   | {
@@ -35,6 +36,7 @@ const UpdateNovelCard: React.FC<UpdateCardProps> = ({
   chapterListInfo: chapterListInfoRaw,
   descriptionText,
   deleteChapter,
+  ttsDownloadIds,
 }) => {
   const { navigate } = useNavigation<NavigationProp<RootStackParamList>>();
   const { downloadChapter, downloadingChapterIds } = useDownload();
@@ -173,6 +175,7 @@ const UpdateNovelCard: React.FC<UpdateCardProps> = ({
                   isLocal={false}
                   isDownloading={downloadingChapterIds.has(item.id)}
                   isUpdateCard
+                  hasTTSDownload={ttsDownloadIds?.has(item.id)}
                   novelName={chapterListInfo.novelName}
                   chapter={item}
                   theme={theme}
@@ -197,6 +200,7 @@ const UpdateNovelCard: React.FC<UpdateCardProps> = ({
         isLocal={false}
         isDownloading={downloadingChapterIds.has(chapterList[0]?.id)}
         isUpdateCard
+        hasTTSDownload={ttsDownloadIds?.has(chapterList[0]?.id)}
         novelName={chapterListInfo.novelName}
         chapter={chapterList[0]}
         theme={theme}

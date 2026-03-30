@@ -12,6 +12,17 @@ import { chapterSchema } from '@database/schema';
 import { BackgroundTaskMetadata } from '@services/ServiceManager';
 import NativeFile from '@specs/NativeFile';
 import { eq } from 'drizzle-orm';
+import { getMMKVObject } from '@utils/mmkv/mmkv';
+import { downloadLog } from '@utils/logger';
+import {
+  INTEGRATION_SETTINGS,
+  CHAPTER_READER_SETTINGS,
+  IntegrationSettings,
+  ChapterReaderSettings,
+} from '@hooks/persisted/useSettings';
+import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
+import { getTTSDownload } from '@database/queries/TTSDownloadQueries';
+import { extractTextElementsFromHtml } from '@utils/tts/extractTextFromHtml';
 
 const createChapterFolder = async (
   path: string,
@@ -97,6 +108,10 @@ export const downloadChapter = async (
     });
 
     await sleep(1000);
+
+    // Auto-queue TTS download if Microsoft Speech is configured and no TTS
+    // download already exists for this chapter.
+    await maybeQueueTTSDownload(chapterText, chapter.id, novel.id);
   } else {
     throw new Error(getString('downloadScreen.chapterEmptyOrScrapeError'));
   }
@@ -107,3 +122,52 @@ export const downloadChapter = async (
     isRunning: false,
   }));
 };
+
+/**
+ * Queue a TTS download for `chapterId` if:
+ *   1. Microsoft Speech is enabled in Integration Settings with a subscription key
+ *   2. A Microsoft voice is configured in reader settings
+ *   3. No TTS download record already exists for this chapter
+ */
+async function maybeQueueTTSDownload(
+  html: string,
+  chapterId: number,
+  novelId: number,
+): Promise<void> {
+  try {
+    const integration = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+    if (
+      !integration?.microsoftSpeech?.enabled ||
+      !integration.microsoftSpeech.subscriptionKey ||
+      !integration.microsoftSpeech.autoDownloadOnChapterDownload
+    ) {
+      return;
+    }
+
+    const readerSettings = getMMKVObject<ChapterReaderSettings>(CHAPTER_READER_SETTINGS);
+    const voice = readerSettings?.tts?.microsoftVoice?.shortName;
+    if (!voice) return;
+
+    // Skip if a TTS download already exists for this chapter.
+    const existing = await getTTSDownload(chapterId);
+    if (existing) return;
+
+    const textElements = extractTextElementsFromHtml(html);
+    if (textElements.length === 0) return;
+
+    await ttsDownloadManager.requestDownload({
+      chapterId,
+      novelId,
+      textElements,
+      voiceSettings: {
+        voice,
+        rate: readerSettings?.tts?.rate ?? 1.0,
+        pitch: readerSettings?.tts?.pitch ?? 1.0,
+        engine: 'microsoft',
+      },
+    });
+  } catch (error) {
+    // TTS download failure must not cause the chapter download to fail.
+    downloadLog.warn('[downloadChapter] TTS auto-download failed:', error);
+  }
+}

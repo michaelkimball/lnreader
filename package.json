@@ -1,9 +1,10 @@
 {
   "name": "lnreader",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "dev:android": "pnpm run generate:env:debug && react-native run-android --appIdSuffix \"debug\" --active-arch-only",
+    "dev:android:wsl": "pnpm run generate:env:debug && cd android && ./gradlew assembleDebug && cd - && adb install -r ./android/app/build/outputs/apk/debug/app-debug.apk",
     "dev:ios": "react-native run-ios",
     "dev:start": "react-native start",
     "dev:clean-start": "pnpm run dev:start -- --reset-cache",
@@ -100,6 +101,7 @@
     "react-native-error-boundary": "^2.0.0",
     "react-native-file-access": "^3.2.0",
     "react-native-gesture-handler": "^2.30.0",
+    "react-native-logs": "^5.6.0",
     "react-native-lottie-splash-screen": "^1.1.2",
     "react-native-mmkv": "^3.3.3",
     "react-native-pager-view": "^6.9.1",

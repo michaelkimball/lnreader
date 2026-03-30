@@ -17,6 +17,8 @@ import com.rajarsheechatterjee.NativeFile.NativePackage
 import com.rajarsheechatterjee.NativeVolumeButtonListener.NativeVolumeButtonListenerPackage
 import com.rajarsheechatterjee.NativeTTSMediaControl.NativeTTSMediaControlPackage
 import com.rajarsheechatterjee.NativeZipArchive.NativeZipArchivePackage
+import com.rajarsheechatterjee.TTSForegroundService.NativeTTSForegroundServicePackage
+import com.rajarsheechatterjee.NativeExpoSpeech.NativeExpoSpeechPackage
 import expo.modules.ApplicationLifecycleDispatcher
 
 class MainApplication : Application(), ReactApplication {
@@ -28,6 +30,8 @@ class MainApplication : Application(), ReactApplication {
                     add(NativeTTSMediaControlPackage())
                     add(NativeVolumeButtonListenerPackage())
                     add(NativeZipArchivePackage())
+                    add(NativeTTSForegroundServicePackage())
+                    add(NativeExpoSpeechPackage())
                 }
 
             override fun getJSMainModuleName(): String = "index"

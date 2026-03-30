@@ -76,6 +76,13 @@ export interface IntegrationSettings {
     subscriptionKey?: string;
     region?: string;
     enabled?: boolean;
+    autoDownloadOnChapterDownload?: boolean;
+  };
+  azureBlobStorage?: {
+    accountName?: string;
+    accountKey?: string;
+    containerName?: string;
+    enabled?: boolean;
   };
 }
 

@@ -26,6 +26,7 @@ import NativeFile from '@specs/NativeFile';
 import { ChapterFilterKey, ChapterOrderKey } from '@database/constants';
 import { chapterFilterToSQL, chapterOrderToSQL } from '@database/utils/parser';
 import { castInt } from '@database/manager/manager';
+import { deleteTTSDownloadsWithFiles } from '@database/queries/TTSDownloadQueries';
 
 // #region Mutations
 
@@ -217,6 +218,7 @@ export const deleteReadChaptersFromDb = async (): Promise<void> => {
         .where(inArray(chapterSchema.id, chapterIds))
         .run();
     });
+    await deleteTTSDownloadsWithFiles(chapterIds);
   }
   showToast(getString('novelScreen.readChaptersDeleted'));
 };
@@ -339,6 +341,95 @@ export const getAllUndownloadedChapters = async (
         eq(chapterSchema.isDownloaded, false),
       ),
     );
+
+export type DownloadAnchor = { page: string; position: number };
+
+/**
+ * Returns the page/position of the last downloaded chapter for a novel, or
+ * failing that, the last read chapter. Used by "Next N" download actions to
+ * start queuing from where the user left off rather than from the beginning.
+ * Returns null when no chapters have been downloaded or read yet.
+ */
+export const getDownloadStartAnchor = async (
+  novelId: number,
+): Promise<DownloadAnchor | null> => {
+  const lastDownloaded = dbManager
+    .select({ page: chapterSchema.page, position: chapterSchema.position })
+    .from(chapterSchema)
+    .where(
+      and(
+        eq(chapterSchema.novelId, novelId),
+        eq(chapterSchema.isDownloaded, true),
+      ),
+    )
+    .orderBy(
+      desc(castInt(chapterSchema.page)),
+      desc(castInt(chapterSchema.position)),
+    )
+    .limit(1)
+    .get();
+
+  if (lastDownloaded?.position != null && lastDownloaded.page != null) {
+    return {
+      page: lastDownloaded.page,
+      position: Number(lastDownloaded.position),
+    };
+  }
+
+  const lastRead = dbManager
+    .select({ page: chapterSchema.page, position: chapterSchema.position })
+    .from(chapterSchema)
+    .where(
+      and(
+        eq(chapterSchema.novelId, novelId),
+        eq(chapterSchema.unread, false),
+      ),
+    )
+    .orderBy(
+      desc(castInt(chapterSchema.page)),
+      desc(castInt(chapterSchema.position)),
+    )
+    .limit(1)
+    .get();
+
+  if (lastRead?.position != null && lastRead.page != null) {
+    return { page: lastRead.page, position: Number(lastRead.position) };
+  }
+
+  return null;
+};
+
+/**
+ * Returns up to `limit` undownloaded chapters that come after `anchor` in
+ * reading order (ascending page then ascending position within page).
+ */
+export const getUndownloadedChaptersFromAnchor = async (
+  novelId: number,
+  anchor: DownloadAnchor,
+  limit: number,
+): Promise<ChapterInfo[]> =>
+  dbManager
+    .select()
+    .from(chapterSchema)
+    .where(
+      and(
+        eq(chapterSchema.novelId, novelId),
+        eq(chapterSchema.isDownloaded, false),
+        or(
+          and(
+            eq(castInt(chapterSchema.page), castInt(anchor.page)),
+            gt(castInt(chapterSchema.position), anchor.position),
+          ),
+          gt(castInt(chapterSchema.page), castInt(anchor.page)),
+        ),
+      ),
+    )
+    .orderBy(
+      asc(castInt(chapterSchema.page)),
+      asc(castInt(chapterSchema.position)),
+    )
+    .limit(limit)
+    .all();
 
 export const getAllUndownloadedAndUnreadChapters = async (
   novelId: number,

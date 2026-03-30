@@ -42,7 +42,11 @@ module.exports = {
       moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
       transform: baseTransform,
       transformIgnorePatterns: baseTransformIgnorePatterns,
-      moduleNameMapper: baseModuleNameMapper,
+      moduleNameMapper: {
+        ...baseModuleNameMapper,
+        // expo-file-system accesses Platform.OS at import time; stub it for Node env
+        '^expo-file-system$': '<rootDir>/__mocks__/expo-file-system.js',
+      },
       setupFilesAfterEnv: ['<rootDir>/src/database/queries/__tests__/setup.ts'],
       collectCoverageFrom: [
         'src/database/queries/**/*.ts',
