@@ -48,7 +48,6 @@
     }
   },
   "dependencies": {
-    "@azure/storage-blob": "^12.31.0",
     "@cd-z/react-native-epub-creator": "^3.0.0",
     "@gorhom/bottom-sheet": "^5.2.8",
     "@legendapp/list": "^2.0.19",
