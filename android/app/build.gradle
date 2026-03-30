@@ -74,8 +74,8 @@ def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 ext {
     versionMajor = 2
-    versionMinor = 0
-    versionPatch = 3
+    versionMinor = 1
+    versionPatch = 0
 }
 
 android {
