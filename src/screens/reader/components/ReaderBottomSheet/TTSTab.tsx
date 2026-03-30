@@ -13,6 +13,7 @@ import {
   MicrosoftSpeechVoice,
 } from '@hooks/persisted';
 import { getString } from '@strings/translations';
+import { uiLog } from '@utils/logger';
 import { List, Button } from '@components/index';
 import { Portal, Modal, Chip } from 'react-native-paper';
 import ReaderSheetPreferenceItem from './ReaderSheetPreferenceItem';
@@ -402,7 +403,7 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
           setDownloadStatus('none');
         }
       } catch (error) {
-        console.error('[TTSTab] Failed to check download status:', error);
+        uiLog.error('[TTSTab] Failed to check download status:', error);
       }
     };
 
@@ -455,7 +456,7 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
             const voices = await microsoftSpeechService.getVoices();
             setMsVoices(voices);
           } catch (error) {
-            console.error('[TTSTab] Failed to load Microsoft voices:', error);
+            uiLog.error('[TTSTab] Failed to load Microsoft voices:', error);
           } finally {
             setLoadingMsVoices(false);
           }
@@ -561,7 +562,7 @@ const TTSTab: React.FC<TTSTabProps> = ({ novel, chapter, webViewRef }) => {
       setDownloadStatus('pending');
       
     } catch (error: any) {
-      console.error('[TTSTab] Download failed:', error);
+      uiLog.error('[TTSTab] Download failed:', error);
       showToast(`Download failed: ${error?.message || 'Unknown error'}`);
     } finally {
       setIsDownloading(false);

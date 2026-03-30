@@ -12,12 +12,11 @@ import {
   desc,
   count,
   sql,
-  or,
 } from 'drizzle-orm';
 import { Directory } from 'expo-file-system';
 import { dbManager } from '@database/db';
-import { ttsDownloadSchema } from '@database/schema';
-import type { TTSDownloadRow, TTSDownloadInsert } from '@database/schema';
+import { ttsDownloadSchema, type TTSDownloadRow } from '@database/schema';
+import { dbLog } from '@utils/logger';
 
 // #region Types
 
@@ -446,7 +445,7 @@ export const getAudioFilePaths = async (chapterId: number): Promise<string[] | n
   try {
     return JSON.parse(download.audioFilesPaths);
   } catch (error) {
-    console.error('[TTSDownloadQueries] Failed to parse audio file paths:', error);
+    dbLog.error('[TTSDownloadQueries] Failed to parse audio file paths:', error);
     return null;
   }
 };

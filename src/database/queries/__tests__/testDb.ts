@@ -76,6 +76,35 @@ const MIGRATION_STATEMENTS = [
 	url text NOT NULL
 )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS repository_url_unique ON Repository (url)`,
+  // TTSDownload table (migration 20260321180828)
+  `CREATE TABLE IF NOT EXISTS TTSDownload (
+	id integer PRIMARY KEY AUTOINCREMENT,
+	chapterId integer NOT NULL,
+	novelId integer NOT NULL,
+	batchJobId text,
+	status text DEFAULT 'pending' NOT NULL,
+	totalElements integer DEFAULT 0,
+	downloadedElements integer DEFAULT 0,
+	storageDir text,
+	audioFilesPaths text,
+	voiceName text,
+	voiceRate text DEFAULT '1.0',
+	voicePitch text DEFAULT '1.0',
+	engine text DEFAULT 'microsoft',
+	createdAt text NOT NULL,
+	startedAt text,
+	completedAt text,
+	totalSizeMB integer DEFAULT 0,
+	errorMessage text,
+	retryCount integer DEFAULT 0,
+	inputBlobFilename text
+)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS tts_download_chapter_unique ON TTSDownload (chapterId)`,
+  `CREATE INDEX IF NOT EXISTS ttsDownloadNovelIdIndex ON TTSDownload (novelId)`,
+  `CREATE INDEX IF NOT EXISTS ttsDownloadStatusIndex ON TTSDownload (status)`,
+  `CREATE INDEX IF NOT EXISTS ttsDownloadNovelStatusIndex ON TTSDownload (novelId, status)`,
+  // elementOffsets column (migration 20260327000001)
+  `ALTER TABLE TTSDownload ADD COLUMN elementOffsets text`,
 ];
 
 /**

@@ -9,6 +9,7 @@ import { File, Paths } from 'expo-file-system';
 import NativeExpoSpeech from '@specs/NativeExpoSpeech';
 import { microsoftSpeechService } from './MicrosoftSpeechService';
 import { ttsCacheManager } from './TTSCacheManager';
+import { ttsLog } from '@utils/logger';
 
 export type TTSEngine = 'expo' | 'microsoft';
 
@@ -64,7 +65,7 @@ class TTSAudioGenerator {
   ): Promise<GenerationResult> {
     const startTime = Date.now();
     const textPreview = text.substring(0, 60).replace(/\n/g, ' ');
-    console.log(`[TTSAudioGenerator] generateAudio start: engine=${settings.engine}, voice=${settings.voice}, text="${textPreview}"`);
+    ttsLog.debug(`[TTSAudioGenerator] generateAudio start: engine=${settings.engine}, voice=${settings.voice}, text="${textPreview}"`);
 
     try {
       // 1. Check cache first (unless force regenerate)
@@ -73,7 +74,7 @@ class TTSAudioGenerator {
         const cachedUri = await ttsCacheManager.get(cacheKey);
         
         if (cachedUri) {
-          console.log(`[TTSAudioGenerator] Cache hit: key=${cacheKey}, uri=${cachedUri}, duration=${Date.now() - startTime}ms`);
+          ttsLog.debug(`[TTSAudioGenerator] Cache hit: key=${cacheKey}, uri=${cachedUri}, duration=${Date.now() - startTime}ms`);
           return {
             uri: cachedUri,
             cached: true,
@@ -81,9 +82,9 @@ class TTSAudioGenerator {
             duration: Date.now() - startTime,
           };
         }
-        console.log(`[TTSAudioGenerator] Cache miss: key=${cacheKey}`);
+        ttsLog.debug(`[TTSAudioGenerator] Cache miss: key=${cacheKey}`);
       } else {
-        console.log('[TTSAudioGenerator] Cache skipped (forceRegenerate=true)');
+        ttsLog.debug('[TTSAudioGenerator] Cache skipped (forceRegenerate=true)');
       }
 
       // 2. Generate new audio
@@ -92,23 +93,23 @@ class TTSAudioGenerator {
 
       try {
         if (settings.engine === 'microsoft') {
-          console.log('[TTSAudioGenerator] Routing to Microsoft Speech engine');
+          ttsLog.debug('[TTSAudioGenerator] Routing to Microsoft Speech engine');
           uri = await this.generateWithMicrosoft(text, settings, options.timeout);
         } else {
-          console.log('[TTSAudioGenerator] Routing to Expo Speech engine');
+          ttsLog.debug('[TTSAudioGenerator] Routing to Expo Speech engine');
           uri = await this.generateWithExpo(text, settings, options.timeout);
         }
       } catch (error) {
-        console.warn(`[TTSAudioGenerator] Engine "${settings.engine}" failed: ${error instanceof Error ? error.message : String(error)}`);
+        ttsLog.warn(`[TTSAudioGenerator] Engine "${settings.engine}" failed: ${error instanceof Error ? error.message : String(error)}`);
         // Fallback to Expo if Microsoft fails and fallback is enabled
         if (settings.engine === 'microsoft' && options.fallbackToExpo !== false) {
-          console.log('[TTSAudioGenerator] Falling back to Expo Speech engine');
+          ttsLog.debug('[TTSAudioGenerator] Falling back to Expo Speech engine');
           uri = await this.generateWithExpo(text, {
             ...settings,
             engine: 'expo',
           }, options.timeout);
           usedEngine = 'expo';
-          console.log(`[TTSAudioGenerator] Fallback Expo generation succeeded: uri=${uri}`);
+          ttsLog.debug(`[TTSAudioGenerator] Fallback Expo generation succeeded: uri=${uri}`);
         } else {
           throw error;
         }
@@ -116,11 +117,11 @@ class TTSAudioGenerator {
 
       // 3. Cache the result
       const cacheKey = ttsCacheManager.generateKey(text, { ...settings, engine: usedEngine });
-      console.log(`[TTSAudioGenerator] Caching result: key=${cacheKey}, engine=${usedEngine}, uri=${uri}`);
+      ttsLog.debug(`[TTSAudioGenerator] Caching result: key=${cacheKey}, engine=${usedEngine}, uri=${uri}`);
       await ttsCacheManager.set(cacheKey, uri, { ...settings, engine: usedEngine }, text);
 
       const duration = Date.now() - startTime;
-      console.log(`[TTSAudioGenerator] generateAudio complete: engine=${usedEngine}, cached=false, duration=${duration}ms, uri=${uri}`);
+      ttsLog.debug(`[TTSAudioGenerator] generateAudio complete: engine=${usedEngine}, cached=false, duration=${duration}ms, uri=${uri}`);
       return {
         uri,
         cached: false,
@@ -128,7 +129,7 @@ class TTSAudioGenerator {
         duration,
       };
     } catch (error) {
-      console.error(`[TTSAudioGenerator] generateAudio failed: ${error instanceof Error ? error.message : String(error)}`);
+      ttsLog.error(`[TTSAudioGenerator] generateAudio failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
@@ -142,7 +143,7 @@ class TTSAudioGenerator {
     timeout?: number
   ): Promise<string> {
     const outputPath = this.getTempFilePath('expo');
-    console.log(`[TTSAudioGenerator] generateWithExpo: voice=${settings.voice || 'system'}, pitch=${settings.pitch || 1.0}, rate=${settings.rate || 1.0}, outputPath=${outputPath}`);
+    ttsLog.debug(`[TTSAudioGenerator] generateWithExpo: voice=${settings.voice || 'system'}, pitch=${settings.pitch || 1.0}, rate=${settings.rate || 1.0}, outputPath=${outputPath}`);
 
     try {
       const promise = NativeExpoSpeech.synthesizeToFile(
@@ -158,11 +159,11 @@ class TTSAudioGenerator {
         ? await this.withTimeout(promise, timeout, 'Expo Speech synthesis timeout')
         : await promise;
 
-      console.log(`[TTSAudioGenerator] generateWithExpo: native synthesizeToFile returned uri=${uri}`);
+      ttsLog.debug(`[TTSAudioGenerator] generateWithExpo: native synthesizeToFile returned uri=${uri}`);
       return uri;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`[TTSAudioGenerator] generateWithExpo failed: ${msg}`);
+      ttsLog.error(`[TTSAudioGenerator] generateWithExpo failed: ${msg}`);
       throw new Error(`Expo Speech generation failed: ${msg}`);
     }
   }
@@ -175,7 +176,7 @@ class TTSAudioGenerator {
     settings: VoiceSettings,
     timeout?: number
   ): Promise<string> {
-    console.log(`[TTSAudioGenerator] generateWithMicrosoft: voice=${settings.voice}, pitch=${settings.pitch}, rate=${settings.rate}`);
+    ttsLog.debug(`[TTSAudioGenerator] generateWithMicrosoft: voice=${settings.voice}, pitch=${settings.pitch}, rate=${settings.rate}`);
 
     try {
       const promise = microsoftSpeechService.generateAudio(text, {
@@ -189,11 +190,11 @@ class TTSAudioGenerator {
         ? await this.withTimeout(promise, timeout, 'Microsoft Speech synthesis timeout')
         : await promise;
 
-      console.log(`[TTSAudioGenerator] generateWithMicrosoft: returned uri=${uri}`);
+      ttsLog.debug(`[TTSAudioGenerator] generateWithMicrosoft: returned uri=${uri}`);
       return uri;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      console.error(`[TTSAudioGenerator] generateWithMicrosoft failed: ${msg}`);
+      ttsLog.error(`[TTSAudioGenerator] generateWithMicrosoft failed: ${msg}`);
       throw new Error(`Microsoft Speech generation failed: ${msg}`);
     }
   }
@@ -244,7 +245,7 @@ class TTSAudioGenerator {
     const { ext } = ENGINE_CONFIGS[engine];
     const filename = `tts_${engine}_${timestamp}_${counter}.${ext}`;
     const uri = new File(Paths.cache, filename).uri;
-    console.log(`[TTSAudioGenerator] getTempFilePath: engine=${engine}, filename=${filename}, uri=${uri}`);
+    ttsLog.debug(`[TTSAudioGenerator] getTempFilePath: engine=${engine}, filename=${filename}, uri=${uri}`);
     return uri;
   }
 

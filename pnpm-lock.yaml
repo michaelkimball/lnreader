@@ -167,6 +167,9 @@ importers:
       react-native-gesture-handler:
         specifier: ^2.30.0
         version: 2.30.0(react-native@0.81.6(@babel/core@7.29.0)(@react-native-community/cli@20.1.1(typescript@5.9.3))(@react-native/metro-config@0.81.6(@babel/core@7.29.0))(@types/react@19.1.17)(react@19.1.4))(react@19.1.4)
+      react-native-logs:
+        specifier: ^5.6.0
+        version: 5.6.0
       react-native-lottie-splash-screen:
         specifier: ^1.1.2
         version: 1.1.2(react-native@0.81.6(@babel/core@7.29.0)(@react-native-community/cli@20.1.1(typescript@5.9.3))(@react-native/metro-config@0.81.6(@babel/core@7.29.0))(@types/react@19.1.17)(react@19.1.4))(react@19.1.4)
@@ -5328,6 +5331,9 @@ packages:
     peerDependencies:
       react: '*'
       react-native: '*'
+
+  react-native-logs@5.6.0:
+    resolution: {integrity: sha512-+5A/AlepSGvaT2RE8YpoLOUNxfra8WBqUOM/GBjggCnfH5+RaCDThpKL6QnengAf+Limmoidm9YXPFzQ9cj3bQ==}
 
   react-native-lottie-splash-screen@1.1.2:
     resolution: {integrity: sha512-5V4sk46UlU2MbRDlncT0O3qtBdqjxKfcW5/VXceU82CPcO0z0ItcaX34L74Zt5fqkR80OW1VCccrsIGly1y0lw==}
@@ -12694,6 +12700,8 @@ snapshots:
     dependencies:
       react: 19.1.4
       react-native: 0.81.6(@babel/core@7.29.0)(@react-native-community/cli@20.1.1(typescript@5.9.3))(@react-native/metro-config@0.81.6(@babel/core@7.29.0))(@types/react@19.1.17)(react@19.1.4)
+
+  react-native-logs@5.6.0: {}
 
   react-native-lottie-splash-screen@1.1.2(react-native@0.81.6(@babel/core@7.29.0)(@react-native-community/cli@20.1.1(typescript@5.9.3))(@react-native/metro-config@0.81.6(@babel/core@7.29.0))(@types/react@19.1.17)(react@19.1.4))(react@19.1.4):
     dependencies:

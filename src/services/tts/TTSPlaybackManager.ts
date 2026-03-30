@@ -15,6 +15,7 @@ import TTSAudioPreloader, { TTSQueueItem } from './TTSAudioPreloader';
 import { VoiceSettings } from './TTSAudioGenerator';
 import NativeTTSForegroundService from '@specs/NativeTTSForegroundService';
 import { getAudioFilePaths, hasCompletedDownload, getElementOffsets, getTTSDownload } from '@database/queries/TTSDownloadQueries';
+import { ttsLog } from '@utils/logger';
 
 export type PlaybackState = 'idle' | 'loading' | 'playing' | 'paused' | 'stopped';
 
@@ -89,14 +90,14 @@ class TTSPlaybackManager extends EventEmitter {
    */
   private setupPreloaderListeners(): void {
     this.preloader.on('ready', (event) => {
-      console.log('[TTSPlaybackManager] Received ready event:', event);
-      console.log('[TTSPlaybackManager] Current state:', this.state, 'currentIndex:', this.currentIndex);
+      ttsLog.debug('[TTSPlaybackManager] Received ready event:', event);
+      ttsLog.debug('[TTSPlaybackManager] Current state:', this.state, 'currentIndex:', this.currentIndex);
       
       if (event.type === 'ready') {
         this.emit('audioReady', { type: 'audioReady', index: event.index, uri: event.uri });
         
         // Auto-start playback if we're loading first element
-        console.log('[TTSPlaybackManager] Checking condition: state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex);
+        ttsLog.debug('[TTSPlaybackManager] Checking condition: state=', this.state, 'event.index=', event.index, 'currentIndex=', this.currentIndex);
         
         const currentIndexReady = this.preloader.isAudioReady(this.currentIndex);
         if (
@@ -105,10 +106,10 @@ class TTSPlaybackManager extends EventEmitter {
           (event.index === this.currentIndex || currentIndexReady)
         ) {
           this.hasAutoStarted = true;
-          console.log('[TTSPlaybackManager] Auto-starting playback for index', this.currentIndex, '(triggered by ready event for index', event.index, ')');
+          ttsLog.debug('[TTSPlaybackManager] Auto-starting playback for index', this.currentIndex, '(triggered by ready event for index', event.index, ')');
           this.playCurrentElement();
         } else {
-          console.log('[TTSPlaybackManager] NOT auto-starting. state=', this.state, 'hasAutoStarted=', this.hasAutoStarted, 'event.index=', event.index, 'currentIndex=', this.currentIndex, 'currentIndexReady=', currentIndexReady);
+          ttsLog.debug('[TTSPlaybackManager] NOT auto-starting. state=', this.state, 'hasAutoStarted=', this.hasAutoStarted, 'event.index=', event.index, 'currentIndex=', this.currentIndex, 'currentIndexReady=', currentIndexReady);
         }
       }
     });
@@ -139,12 +140,12 @@ class TTSPlaybackManager extends EventEmitter {
     novelId: number,
     settings: VoiceSettings
   ): Promise<void> {
-    console.log('🔥🔥🔥 [TTSPlaybackManager] HOT RELOAD TEST - play() called with', textElements.length, 'elements, current state:', this.state);
+    ttsLog.debug('🔥🔥🔥 [TTSPlaybackManager] HOT RELOAD TEST - play() called with', textElements.length, 'elements, current state:', this.state);
     
     // Prevent re-entrant calls when already loading or playing
     // This stops the WebView from interrupting playback with rapid 'speak' events
     if (this.state === 'loading' || this.state === 'playing') {
-      console.log('[TTSPlaybackManager] Already in state:', this.state, '- ignoring play() call');
+      ttsLog.debug('[TTSPlaybackManager] Already in state:', this.state, '- ignoring play() call');
       return;
     }
     
@@ -153,17 +154,17 @@ class TTSPlaybackManager extends EventEmitter {
       await this.stop(true);
 
       // Clear any pending idle timer from stop() - must do this AFTER stop()
-      console.log('[TTSPlaybackManager] Checking for idle timer after stop()...');
+      ttsLog.debug('[TTSPlaybackManager] Checking for idle timer after stop()...');
       if (this.idleTimer) {
-        console.log('[TTSPlaybackManager] Clearing idle timer!');
+        ttsLog.debug('[TTSPlaybackManager] Clearing idle timer!');
         clearTimeout(this.idleTimer);
         this.idleTimer = null;
       } else {
-        console.log('[TTSPlaybackManager] No idle timer to clear');
+        ttsLog.debug('[TTSPlaybackManager] No idle timer to clear');
       }
 
       // Set state
-      console.log('[TTSPlaybackManager] Setting state to loading, index to', startIndex);
+      ttsLog.debug('[TTSPlaybackManager] Setting state to loading, index to', startIndex);
       this.setState('loading');
       this.currentIndex = startIndex;
       this.chapterId = chapterId;
@@ -171,7 +172,7 @@ class TTSPlaybackManager extends EventEmitter {
       this.voiceSettings = settings;
       this.isOfflineMode = false;
 
-      console.log('[TTSPlaybackManager] Starting foreground service...');
+      ttsLog.debug('[TTSPlaybackManager] Starting foreground service...');
       // Start foreground service
       NativeTTSForegroundService.startService(
         'LNReader',
@@ -185,12 +186,12 @@ class TTSPlaybackManager extends EventEmitter {
       if (hasOfflineAudio) {
         const audioFiles = await getAudioFilePaths(chapterId);
         if (audioFiles && audioFiles.length > 0) {
-          console.log('[TTSPlaybackManager] Playing from offline files:', audioFiles.length, 'files');
+          ttsLog.debug('[TTSPlaybackManager] Playing from offline files:', audioFiles.length, 'files');
           return this.playFromOfflineFiles(audioFiles, startIndex, chapterId, novelId, textElements);
         }
       }
 
-      console.log('[TTSPlaybackManager] Starting preloader...');
+      ttsLog.debug('[TTSPlaybackManager] Starting preloader...');
       // Start preloading
       this.preloader.preloadChapter(textElements, settings);
       
@@ -204,11 +205,11 @@ class TTSPlaybackManager extends EventEmitter {
       // Emit progress
       this.emitProgress();
 
-      console.log('[TTSPlaybackManager] Waiting for preloader ready event...');
+      ttsLog.debug('[TTSPlaybackManager] Waiting for preloader ready event...');
       // Wait for first element to be ready, then play
       // The preloader will emit 'ready' event which triggers playback
     } catch (error) {
-      console.error('[TTSPlaybackManager] Error in play():', error);
+      ttsLog.error('[TTSPlaybackManager] Error in play():', error);
       this.emitError('Failed to start playback', 'PLAY_ERROR');
       this.setState('idle');
     }
@@ -231,11 +232,11 @@ class TTSPlaybackManager extends EventEmitter {
     novelId: number,
     textElements: string[] = []
   ): Promise<void> {
-    console.log('[TTSPlaybackManager] playFromOfflineFiles() called with', audioFilePaths.length, 'files');
+    ttsLog.debug('[TTSPlaybackManager] playFromOfflineFiles() called with', audioFilePaths.length, 'files');
     
     // Prevent re-entrant calls when already playing (loading is OK — play() sets it before calling us)
     if (this.state === 'playing') {
-      console.log('[TTSPlaybackManager] Already playing - ignoring playFromOfflineFiles() call');
+      ttsLog.debug('[TTSPlaybackManager] Already playing - ignoring playFromOfflineFiles() call');
       return;
     }
     
@@ -252,7 +253,7 @@ class TTSPlaybackManager extends EventEmitter {
       // Set state and offline mode flag
       // currentIndex always refers to the audio file index (0 for single-file offline mode).
       // startIndex is the text element to begin at — used for seeking and offset initialisation.
-      console.log('[TTSPlaybackManager] Setting state to loading for offline playback, startIndex:', startIndex);
+      ttsLog.debug('[TTSPlaybackManager] Setting state to loading for offline playback, startIndex:', startIndex);
       this.setState('loading');
       this.currentIndex = 0;
       this.chapterId = chapterId;
@@ -264,14 +265,14 @@ class TTSPlaybackManager extends EventEmitter {
       this.lastEmittedElementIndex = startIndex - 1; // so the first emitted change is the right element
       try {
         const download = await getTTSDownload(chapterId);
-        console.log('[TTSPlaybackManager] Offline download voice settings - rate:', download?.voiceRate, 'pitch:', download?.voicePitch, 'voice:', download?.voiceName);
+        ttsLog.debug('[TTSPlaybackManager] Offline download voice settings - rate:', download?.voiceRate, 'pitch:', download?.voicePitch, 'voice:', download?.voiceName);
         const offsets = await getElementOffsets(chapterId);
         if (offsets && offsets.length > 0) {
           this.elementOffsets = offsets;
-          console.log('[TTSPlaybackManager] Loaded', offsets.length, 'element offsets for position tracking');
+          ttsLog.debug('[TTSPlaybackManager] Loaded', offsets.length, 'element offsets for position tracking');
         }
       } catch (e) {
-        console.warn('[TTSPlaybackManager] Failed to load element offsets:', e);
+        ttsLog.warn('[TTSPlaybackManager] Failed to load element offsets:', e);
       }
 
       // Start foreground service
@@ -290,7 +291,7 @@ class TTSPlaybackManager extends EventEmitter {
         uri: filePath, // Store file path directly in queue item
       }));
 
-      console.log('[TTSPlaybackManager] Offline queue built with', this.queue.length, 'items');
+      ttsLog.debug('[TTSPlaybackManager] Offline queue built with', this.queue.length, 'items');
 
       // Emit progress
       this.emitProgress();
@@ -300,7 +301,7 @@ class TTSPlaybackManager extends EventEmitter {
       await this.playCurrentElementOffline(startIndex);
 
     } catch (error) {
-      console.error('[TTSPlaybackManager] Error in playFromOfflineFiles():', error);
+      ttsLog.error('[TTSPlaybackManager] Error in playFromOfflineFiles():', error);
       this.emitError('Failed to start offline playback', 'PLAY_OFFLINE_ERROR');
       this.setState('idle');
     }
@@ -311,17 +312,17 @@ class TTSPlaybackManager extends EventEmitter {
    * Similar to playCurrentElement() but uses URIs directly from queue
    */
   private async playCurrentElementOffline(startElementIndex: number = 0): Promise<void> {
-    console.log('[TTSPlaybackManager] playCurrentElementOffline() called, currentIndex:', this.currentIndex, 'startElementIndex:', startElementIndex);
+    ttsLog.debug('[TTSPlaybackManager] playCurrentElementOffline() called, currentIndex:', this.currentIndex, 'startElementIndex:', startElementIndex);
     try {
       const item = this.queue[this.currentIndex];
       if (!item || !item.uri) {
-        console.warn('[TTSPlaybackManager] No item or URI at current index');
+        ttsLog.warn('[TTSPlaybackManager] No item or URI at current index');
         await this.next();
         return;
       }
 
       const uri = item.uri;
-      console.log('[TTSPlaybackManager] Playing offline URI:', uri);
+      ttsLog.debug('[TTSPlaybackManager] Playing offline URI:', uri);
 
       // Determine seek position from element offsets
       const seekPositionMs = startElementIndex > 0 && this.elementOffsets.length > startElementIndex
@@ -345,12 +346,12 @@ class TTSPlaybackManager extends EventEmitter {
 
       // If user pressed pause while we were loading/transitioning, honor it
       if (this.state === 'paused') {
-        console.log('[TTSPlaybackManager] State changed to paused during offline load - pausing sound');
+        ttsLog.debug('[TTSPlaybackManager] State changed to paused during offline load - pausing sound');
         await sound.pauseAsync();
         return;
       }
 
-      console.log('[TTSPlaybackManager] Offline sound created and playing! seekMs:', seekPositionMs);
+      ttsLog.debug('[TTSPlaybackManager] Offline sound created and playing! seekMs:', seekPositionMs);
       this.setState('playing');
 
       // Update UI — emit the text element we're actually starting at
@@ -371,7 +372,7 @@ class TTSPlaybackManager extends EventEmitter {
       );
 
     } catch (error) {
-      console.error('[TTSPlaybackManager] Error in playCurrentElementOffline():', error);
+      ttsLog.error('[TTSPlaybackManager] Error in playCurrentElementOffline():', error);
       this.emitError('Failed to play offline element', 'PLAY_OFFLINE_ELEMENT_ERROR');
       // Try to skip to next
       await this.next();
@@ -383,15 +384,15 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async pause(): Promise<void> {
     try {
-      console.log('[TTSPlaybackManager] pause() called - currentState:', this.state);
+      ttsLog.debug('[TTSPlaybackManager] pause() called - currentState:', this.state);
       if (this.state !== 'playing') {
-        console.log('[TTSPlaybackManager] pause() skipped - not in playing state');
+        ttsLog.debug('[TTSPlaybackManager] pause() skipped - not in playing state');
         return;
       }
 
       await this.currentSound?.pauseAsync();
       this.setState('paused');
-      console.log('[TTSPlaybackManager] pause() successful');
+      ttsLog.debug('[TTSPlaybackManager] pause() successful');
       
       // Update foreground service
       NativeTTSForegroundService.startService(
@@ -411,16 +412,16 @@ class TTSPlaybackManager extends EventEmitter {
    */
   async resume(): Promise<void> {
     try {
-      console.log('[TTSPlaybackManager] resume() called - currentState:', this.state);
+      ttsLog.debug('[TTSPlaybackManager] resume() called - currentState:', this.state);
       if (this.state !== 'paused') {
-        console.log('[TTSPlaybackManager] resume() skipped - not in paused state');
+        ttsLog.debug('[TTSPlaybackManager] resume() skipped - not in paused state');
         return;
       }
 
       if (!this.currentSound) {
         // State is paused but no sound loaded (race condition during element transition)
         // Re-trigger playback from current position; playCurrentElement will honor paused state
-        console.log('[TTSPlaybackManager] resume() - no sound, re-loading current element');
+        ttsLog.debug('[TTSPlaybackManager] resume() - no sound, re-loading current element');
         this.setState('loading');
         if (this.isOfflineMode) {
           await this.playCurrentElementOffline(this.currentIndex);
@@ -432,7 +433,7 @@ class TTSPlaybackManager extends EventEmitter {
 
       await this.currentSound.playAsync();
       this.setState('playing');
-      console.log('[TTSPlaybackManager] resume() successful');
+      ttsLog.debug('[TTSPlaybackManager] resume() successful');
       
       // Update foreground service
       NativeTTSForegroundService.startService(
@@ -453,12 +454,12 @@ class TTSPlaybackManager extends EventEmitter {
   async stop(fromPlay: boolean = false): Promise<void> {
     // Prevent recursive calls - ALWAYS block if already stopping
     if (this.isStopping) {
-      console.log('[TTSPlaybackManager] stop() already in progress, skipping');
+      ttsLog.debug('[TTSPlaybackManager] stop() already in progress, skipping');
       return;
     }
     
     this.isStopping = true;
-    console.log('[TTSPlaybackManager] stop() starting...', fromPlay ? '(from play())' : '');
+    ttsLog.debug('[TTSPlaybackManager] stop() starting...', fromPlay ? '(from play())' : '');
     
     try {
       // Clear any existing idle timer first
@@ -491,26 +492,26 @@ class TTSPlaybackManager extends EventEmitter {
       // Only emit queueEnd if this is a real stop (not from play())
       // Otherwise it triggers WebView tts.stop() which resets the WebView's queue
       if (!fromPlay) {
-        console.log('[TTSPlaybackManager] Emitting queueEnd with reason=stopped (fromPlay=false)');
+        ttsLog.debug('[TTSPlaybackManager] Emitting queueEnd with reason=stopped (fromPlay=false)');
         this.emit('queueEnd', { type: 'queueEnd', reason: 'stopped' });
       } else {
-        console.log('[TTSPlaybackManager] Skipping queueEnd emission (fromPlay=true)');
+        ttsLog.debug('[TTSPlaybackManager] Skipping queueEnd emission (fromPlay=true)');
       }
 
       // Only set idle timer if this is a real stop, not called from play()
       if (!fromPlay) {
-        console.log('[TTSPlaybackManager] stop() setting idle timer...');
+        ttsLog.debug('[TTSPlaybackManager] stop() setting idle timer...');
         this.idleTimer = setTimeout(() => {
-          console.log('[TTSPlaybackManager] Idle timer fired! Setting state to idle');
+          ttsLog.debug('[TTSPlaybackManager] Idle timer fired! Setting state to idle');
           this.setState('idle');
           this.isStopping = false;
         }, 100);
       } else {
-        console.log('[TTSPlaybackManager] Skipping idle timer (called from play())');
+        ttsLog.debug('[TTSPlaybackManager] Skipping idle timer (called from play())');
         this.isStopping = false;
       }
     } catch (error) {
-      console.error('[TTSPlaybackManager] Error in stop():', error);
+      ttsLog.error('[TTSPlaybackManager] Error in stop():', error);
       this.isStopping = false;
     }
   }
@@ -519,10 +520,10 @@ class TTSPlaybackManager extends EventEmitter {
    * Seek to specific element index
    */
   async seek(index: number): Promise<void> {
-    console.log('🎯 [TTSPlaybackManager] seek() called with index:', index, 'queue.length:', this.queue.length, 'currentState:', this.state);
+    ttsLog.debug('🎯 [TTSPlaybackManager] seek() called with index:', index, 'queue.length:', this.queue.length, 'currentState:', this.state);
     try {
       if (index < 0 || index >= this.queue.length) {
-        console.log('[TTSPlaybackManager] seek() index out of bounds, returning');
+        ttsLog.debug('[TTSPlaybackManager] seek() index out of bounds, returning');
         return;
       }
 
@@ -534,28 +535,28 @@ class TTSPlaybackManager extends EventEmitter {
 
       // Update index
       this.currentIndex = index;
-      console.log('[TTSPlaybackManager] seek() - index updated to', index);
+      ttsLog.debug('[TTSPlaybackManager] seek() - index updated to', index);
       
       // Ensure buffer ahead
       await this.preloader.ensureBufferAhead(index);
-      console.log('[TTSPlaybackManager] seek() - buffer ensured');
+      ttsLog.debug('[TTSPlaybackManager] seek() - buffer ensured');
 
       // Play new element (use appropriate method based on mode)
       if (this.state === 'playing' || this.state === 'paused') {
-        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- calling play method');
+        ttsLog.debug('[TTSPlaybackManager] seek() - state is', this.state, '- calling play method');
         if (this.isOfflineMode) {
           await this.playCurrentElementOffline();
         } else {
           await this.playCurrentElement();
         }
       } else {
-        console.log('[TTSPlaybackManager] seek() - state is', this.state, '- NOT calling play method');
+        ttsLog.debug('[TTSPlaybackManager] seek() - state is', this.state, '- NOT calling play method');
       }
 
       this.emitProgress();
-      console.log('[TTSPlaybackManager] seek() completed');
+      ttsLog.debug('[TTSPlaybackManager] seek() completed');
     } catch (error) {
-      console.error('[TTSPlaybackManager] seek() error:', error);
+      ttsLog.error('[TTSPlaybackManager] seek() error:', error);
       this.emitError('Failed to seek', 'SEEK_ERROR');
     }
   }
@@ -606,30 +607,30 @@ class TTSPlaybackManager extends EventEmitter {
    * Play current element (internal method)
    */
   private async playCurrentElement(): Promise<void> {
-    console.log('[TTSPlaybackManager] playCurrentElement() called, currentIndex:', this.currentIndex);
+    ttsLog.debug('[TTSPlaybackManager] playCurrentElement() called, currentIndex:', this.currentIndex);
     try {
       const item = this.queue[this.currentIndex];
       if (!item) {
-        console.warn('[TTSPlaybackManager] No item at current index');
+        ttsLog.warn('[TTSPlaybackManager] No item at current index');
         return;
       }
 
       // Check if audio is ready
       const isReady = this.preloader.isAudioReady(this.currentIndex);
-      console.log('[TTSPlaybackManager] Audio ready?', isReady);
+      ttsLog.debug('[TTSPlaybackManager] Audio ready?', isReady);
       
       if (!isReady) {
         this.emit('audioLoading', { type: 'audioLoading', index: this.currentIndex });
-        console.log('[TTSPlaybackManager] Audio not ready, waiting...');
+        ttsLog.debug('[TTSPlaybackManager] Audio not ready, waiting...');
         // Audio will auto-play when preloader emits 'ready' event
         return;
       }
 
       const uri = this.preloader.getAudioUri(this.currentIndex);
-      console.log('[TTSPlaybackManager] Got URI:', uri);
+      ttsLog.debug('[TTSPlaybackManager] Got URI:', uri);
       
       if (!uri) {
-        console.warn('[TTSPlaybackManager] No URI, skipping to next');
+        ttsLog.warn('[TTSPlaybackManager] No URI, skipping to next');
         await this.next();
         return;
       }
@@ -640,7 +641,7 @@ class TTSPlaybackManager extends EventEmitter {
         this.currentSound = null;
       }
 
-      console.log('[TTSPlaybackManager] Creating sound from URI...');
+      ttsLog.debug('[TTSPlaybackManager] Creating sound from URI...');
       // Load and play new sound
       const { sound } = await Audio.Sound.createAsync(
         { uri },
@@ -652,12 +653,12 @@ class TTSPlaybackManager extends EventEmitter {
 
       // If user pressed pause while we were loading/transitioning, honor it
       if (this.state === 'paused') {
-        console.log('[TTSPlaybackManager] State changed to paused during load - pausing sound');
+        ttsLog.debug('[TTSPlaybackManager] State changed to paused during load - pausing sound');
         await sound.pauseAsync();
         return;
       }
 
-      console.log('[TTSPlaybackManager] Sound created and playing!');
+      ttsLog.debug('[TTSPlaybackManager] Sound created and playing!');
       this.setState('playing');
 
       // Update UI
@@ -680,7 +681,7 @@ class TTSPlaybackManager extends EventEmitter {
       await this.preloader.ensureBufferAhead(this.currentIndex);
 
     } catch (error) {
-      console.error('[TTSPlaybackManager] Error in playCurrentElement():', error);
+      ttsLog.error('[TTSPlaybackManager] Error in playCurrentElement():', error);
       this.emitError('Failed to play element', 'PLAY_ELEMENT_ERROR');
       // Try to skip to next
       await this.next();
@@ -692,11 +693,11 @@ class TTSPlaybackManager extends EventEmitter {
    */
   private onPlaybackStatusUpdate(status: AVPlaybackStatus): void {
     if (!status.isLoaded) {
-      console.log('[TTSPlaybackManager] Status update: not loaded');
+      ttsLog.debug('[TTSPlaybackManager] Status update: not loaded');
       return;
     }
 
-    console.log('[TTSPlaybackManager] Status update:', {
+    ttsLog.debug('[TTSPlaybackManager] Status update:', {
       isPlaying: status.isPlaying,
       positionMillis: status.positionMillis,
       durationMillis: status.durationMillis,
@@ -724,9 +725,9 @@ class TTSPlaybackManager extends EventEmitter {
     }
 
     if (status.didJustFinish) {
-      console.log('==================================================');
-      console.log('[TTSPlaybackManager] ⚠️ AUDIO FINISHED - ADVANCING TO NEXT');
-      console.log('==================================================');
+      ttsLog.debug('==================================================');
+      ttsLog.debug('[TTSPlaybackManager] ⚠️ AUDIO FINISHED - ADVANCING TO NEXT');
+      ttsLog.debug('==================================================');
       // Auto-advance to next
       this.next();
     }

@@ -5,7 +5,6 @@ import { Portal, TextInput, Text } from 'react-native-paper';
 import { Appbar, Button, List, SafeAreaView, SwitchItem, Modal } from '@components';
 import { useTheme, useIntegrationSettings } from '@hooks/persisted';
 import { showToast } from '@utils/showToast';
-import { getString } from '@strings/translations';
 
 import { microsoftSpeechService } from '@services/tts/MicrosoftSpeechService';
 

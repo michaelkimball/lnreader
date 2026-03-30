@@ -10,6 +10,7 @@
 
 import { EventEmitter } from './EventEmitter';
 import TTSAudioGenerator, { VoiceSettings, GenerationResult } from './TTSAudioGenerator';
+import { ttsLog } from '@utils/logger';
 
 export interface TTSQueueItem {
   index: number;
@@ -70,7 +71,7 @@ class TTSAudioPreloader extends EventEmitter {
     settings: VoiceSettings,
     options?: Partial<PreloadOptions>
   ): Promise<void> {
-    console.log('[TTSAudioPreloader] preloadChapter() called with', textElements.length, 'elements');
+    ttsLog.debug('[TTSAudioPreloader] preloadChapter() called with', textElements.length, 'elements');
     // Merge options
     this.options = { ...this.options, ...options };
     this.settings = settings;
@@ -85,13 +86,13 @@ class TTSAudioPreloader extends EventEmitter {
     this.resetStats();
 
     try{
-      console.log('[TTSAudioPreloader] Starting priority preload...');
+      ttsLog.debug('[TTSAudioPreloader] Starting priority preload...');
       // Phase 1: Priority elements (first N)
       await this.preloadPriority();
 
       if (this.isCancelled) return;
 
-      console.log('[TTSAudioPreloader] Starting background preload...');
+      ttsLog.debug('[TTSAudioPreloader] Starting background preload...');
       // Phase 2: Remaining elements in background
       await this.preloadBackground();
 
@@ -99,7 +100,7 @@ class TTSAudioPreloader extends EventEmitter {
         this.emit('complete', { type: 'complete', stats: this.getProgress() });
       }
     } catch (error) {
-      console.error('[TTSAudioPreloader] Error in preloadChapter():', error);
+      ttsLog.error('[TTSAudioPreloader] Error in preloadChapter():', error);
       throw error;
     } finally {
       this.isPreloading = false;
@@ -180,7 +181,7 @@ class TTSAudioPreloader extends EventEmitter {
    */
   private async preloadPriority(): Promise<void> {
     const priorityItems = this.queue.slice(0, this.options.priorityCount);
-    console.log('[TTSAudioPreloader] Generating', priorityItems.length, 'priority items');
+    ttsLog.debug('[TTSAudioPreloader] Generating', priorityItems.length, 'priority items');
     
     await this.generateBatch(priorityItems, 2);  // Low concurrency for priority
   }

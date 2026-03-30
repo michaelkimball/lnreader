@@ -12,10 +12,10 @@
  */
 
 import { getMMKVObject } from '@utils/mmkv/mmkv';
-import { INTEGRATION_SETTINGS } from '@hooks/persisted/useSettings';
-import { IntegrationSettings } from '@hooks/persisted/useSettings';
+import { INTEGRATION_SETTINGS, IntegrationSettings } from '@hooks/persisted/useSettings';
 import { File, Directory, Paths } from 'expo-file-system';
 import { unzip } from 'react-native-zip-archive';
+import { ttsLog } from '@utils/logger';
 
 const API_VERSION = '2024-04-01';
 
@@ -105,9 +105,9 @@ class AzureBatchSynthesisService {
       this.region = region;
       this.baseEndpoint = `https://${region}.api.cognitive.microsoft.com/texttospeech/batchsyntheses`;
 
-      console.log('[AzureBatchSynthesis] Initialized:', { region, baseEndpoint: this.baseEndpoint });
+      ttsLog.debug('[AzureBatchSynthesis] Initialized:', { region, baseEndpoint: this.baseEndpoint });
     } catch (error) {
-      console.error('[AzureBatchSynthesis] Initialization failed:', error);
+      ttsLog.error('[AzureBatchSynthesis] Initialization failed:', error);
       throw error;
     }
   }
@@ -204,11 +204,11 @@ ${ssmlEntries}
         throw new Error(`Batch submission failed: ${response.status} - ${errorText}`);
       }
 
-      console.log('[AzureBatchSynthesis] Job submitted:', { jobId, chapterId, elementCount: texts.length });
+      ttsLog.debug('[AzureBatchSynthesis] Job submitted:', { jobId, chapterId, elementCount: texts.length });
 
       return jobId;
     } catch (error) {
-      console.error('[AzureBatchSynthesis] Job submission failed:', error);
+      ttsLog.error('[AzureBatchSynthesis] Job submission failed:', error);
       throw error;
     }
   }
@@ -242,7 +242,7 @@ ${ssmlEntries}
       const status: BatchJobStatus = await response.json();
       return status;
     } catch (error) {
-      console.error('[AzureBatchSynthesis] Failed to get job status:', error);
+      ttsLog.error('[AzureBatchSynthesis] Failed to get job status:', error);
       throw error;
     }
   }
@@ -321,9 +321,6 @@ ${ssmlEntries}
 
       // Parse sentence boundary JSON (same base name as audio, .json extension)
       let sentenceBoundaries: SentenceBoundary[] = [];
-      const jsonFiles = (entries as File[])
-        .filter(f => f.uri.endsWith('.json'))
-        .sort((a, b) => a.uri.localeCompare(b.uri));
 
       // Azure names sentence boundary files "*.sentence.json"
       const sentenceJsonFiles = (entries as File[])
@@ -334,19 +331,19 @@ ${ssmlEntries}
         try {
           const jsonText = await sentenceJsonFiles[0].text();
           const parsed = JSON.parse(jsonText);
-          console.log('[AzureBatchSynthesis] sentence.json first entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
+          ttsLog.debug('[AzureBatchSynthesis] sentence.json first entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
           if (Array.isArray(parsed)) {
             sentenceBoundaries = parsed as SentenceBoundary[];
           }
         } catch (e) {
-          console.warn('[AzureBatchSynthesis] Failed to parse timing JSON:', e);
+          ttsLog.warn('[AzureBatchSynthesis] Failed to parse timing JSON:', e);
         }
       }
 
-      console.log(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files, ${sentenceBoundaries.length} sentence boundaries`);
+      ttsLog.debug(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files, ${sentenceBoundaries.length} sentence boundaries`);
       return { audioFiles, sentenceBoundaries };
     } catch (error) {
-      console.error('[AzureBatchSynthesis] Download failed:', error);
+      ttsLog.error('[AzureBatchSynthesis] Download failed:', error);
       throw error;
     } finally {
       if (tempZipFile.exists) {
@@ -376,12 +373,12 @@ ${ssmlEntries}
       });
 
       if (response.ok) {
-        console.log('[AzureBatchSynthesis] Deleted job:', jobId);
+        ttsLog.debug('[AzureBatchSynthesis] Deleted job:', jobId);
       } else {
-        console.warn('[AzureBatchSynthesis] Failed to delete job:', jobId, response.status);
+        ttsLog.warn('[AzureBatchSynthesis] Failed to delete job:', jobId, response.status);
       }
     } catch (error) {
-      console.error('[AzureBatchSynthesis] Delete job error:', error);
+      ttsLog.error('[AzureBatchSynthesis] Delete job error:', error);
       // Don't throw - cleanup failure is not critical
     }
   }
@@ -412,7 +409,7 @@ ${ssmlEntries}
       const result = await response.json();
       return result.values || [];
     } catch (error) {
-      console.error('[AzureBatchSynthesis] List jobs failed:', error);
+      ttsLog.error('[AzureBatchSynthesis] List jobs failed:', error);
       return [];
     }
   }

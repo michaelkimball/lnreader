@@ -11,6 +11,7 @@ import forge from 'node-forge';
 import { getMMKVObject } from '@utils/mmkv/mmkv';
 import { INTEGRATION_SETTINGS } from '@hooks/persisted/useSettings';
 import { IntegrationSettings } from '@type/integrations';
+import { ttsLog } from '@utils/logger';
 
 /** HMAC-SHA256 using node-forge (pure JS, works in Hermes/React Native).
  *  key is base64-encoded. Returns base64 signature. */
@@ -47,12 +48,12 @@ class AzureBlobStorageService {
       this.accountKey = accountKey;
       this.containerName = containerName || 'tts-inputs';
       this.initialized = true;
-      console.log('[AzureBlobStorage] Initialized:', {
+      ttsLog.debug('[AzureBlobStorage] Initialized:', {
         accountName,
         containerName: this.containerName,
       });
     } catch (error) {
-      console.error('[AzureBlobStorage] Initialization failed:', error);
+      ttsLog.error('[AzureBlobStorage] Initialization failed:', error);
       throw error;
     }
   }
@@ -147,7 +148,7 @@ class AzureBlobStorageService {
     }
 
     const sasUrl = this.generateSasUrl(filename, 120);
-    console.log('[AzureBlobStorage] Uploaded:', { filename, size: contentLength });
+    ttsLog.debug('[AzureBlobStorage] Uploaded:', { filename, size: contentLength });
     return { url: sasUrl, filename, size: contentLength };
   }
 
@@ -211,10 +212,10 @@ class AzureBlobStorageService {
         headers: { ...xmsHeaders, Authorization: auth },
       });
       if (!response.ok && response.status !== 404) {
-        console.warn('[AzureBlobStorage] Delete failed:', response.status);
+        ttsLog.warn('[AzureBlobStorage] Delete failed:', response.status);
       }
     } catch (error) {
-      console.error('[AzureBlobStorage] Delete error:', error);
+      ttsLog.error('[AzureBlobStorage] Delete error:', error);
     }
   }
 

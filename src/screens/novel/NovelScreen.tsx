@@ -7,7 +7,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { Portal, Appbar, Snackbar } from 'react-native-paper';
-import { useDownload, useTheme } from '@hooks/persisted';
+import { useDownload, useTheme, useIntegrationSettings } from '@hooks/persisted';
 import JumpToChapterModal from './components/JumpToChapterModal';
 import { Actionbar } from '../../components/Actionbar/Actionbar';
 import EditInfoModal from './components/EditInfoModal';
@@ -18,7 +18,7 @@ import NovelScreenLoading from './components/LoadingAnimation/NovelScreenLoading
 import { NovelScreenProps } from '@navigators/types';
 import { ChapterInfo } from '@database/types';
 import { getString } from '@strings/translations';
-import { isNumber, noop } from 'lodash-es';
+import { noop } from 'lodash-es';
 import NovelAppbar from './components/NovelAppbar';
 import { resolveUrl } from '@services/plugin/fetch';
 import {
@@ -30,13 +30,13 @@ import {
   updateChapterProgressByIds,
 } from '@database/queries/ChapterQueries';
 import { ttsDownloadManager } from '@services/tts/TTSDownloadManager';
-import { useIntegrationSettings } from '@hooks/persisted';
 import { MaterialDesignIconName } from '@type/icon';
 import NovelScreenList from './components/NovelScreenList';
 import { ThemeColors } from '@theme/types';
 import { SafeAreaView } from '@components';
 import { useNovelContext } from './NovelContext';
 import { LegendListRef } from '@legendapp/list';
+import { uiLog } from '@utils/logger';
 
 const Novel = ({ route, navigation }: NovelScreenProps) => {
   const {
@@ -125,7 +125,7 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
         ttsDownloadManager
           .requestDownloadFromStoredHtml(chapter.id, novel.id, novel.pluginId)
           .catch(err =>
-            console.warn('[NovelScreen] TTS queue for downloaded chapter failed:', err),
+            uiLog.warn('[NovelScreen] TTS queue for downloaded chapter failed:', err),
           );
       }
     },
@@ -175,7 +175,7 @@ const Novel = ({ route, navigation }: NovelScreenProps) => {
                       novel.pluginId,
                     )
                     .catch(err =>
-                      console.warn(
+                      uiLog.warn(
                         '[NovelScreen] TTS queue for selected chapter failed:',
                         err,
                       ),

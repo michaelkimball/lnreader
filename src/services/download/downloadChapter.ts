@@ -13,6 +13,7 @@ import { BackgroundTaskMetadata } from '@services/ServiceManager';
 import NativeFile from '@specs/NativeFile';
 import { eq } from 'drizzle-orm';
 import { getMMKVObject } from '@utils/mmkv/mmkv';
+import { downloadLog } from '@utils/logger';
 import {
   INTEGRATION_SETTINGS,
   CHAPTER_READER_SETTINGS,
@@ -167,6 +168,6 @@ async function maybeQueueTTSDownload(
     });
   } catch (error) {
     // TTS download failure must not cause the chapter download to fail.
-    console.warn('[downloadChapter] TTS auto-download failed:', error);
+    downloadLog.warn('[downloadChapter] TTS auto-download failed:', error);
   }
 }

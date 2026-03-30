@@ -19,6 +19,7 @@ import { getTTSDownloadsByStatus } from '@database/queries/TTSDownloadQueries';
 import { ttsDownloadManager, DownloadEvent } from '@services/tts/TTSDownloadManager';
 import { getNovelById } from '@database/queries/NovelQueries';
 import { showToast } from '@utils/showToast';
+import { uiLog } from '@utils/logger';
 import dayjs from 'dayjs';
 
 interface TTSDownloadsScreenProps {
@@ -71,7 +72,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
         totalSizeMB: allDownloads.reduce((sum, d) => sum + (d.totalSizeMB || 0), 0),
       });
     } catch (error) {
-      console.error('[TTSDownloadsScreen] Failed to load downloads:', error);
+      uiLog.error('[TTSDownloadsScreen] Failed to load downloads:', error);
       showToast('Failed to load downloads');
     }
   };
@@ -97,7 +98,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
       showToast('Download removed');
       loadDownloads();
     } catch (error) {
-      console.error('[TTSDownloadsScreen] Delete failed:', error);
+      uiLog.error('[TTSDownloadsScreen] Delete failed:', error);
       showToast('Failed to remove download');
     }
   };
@@ -108,7 +109,7 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
       showToast('All downloads cleared');
       loadDownloads();
     } catch (error) {
-      console.error('[TTSDownloadsScreen] Clear all failed:', error);
+      uiLog.error('[TTSDownloadsScreen] Clear all failed:', error);
       showToast('Failed to clear downloads');
     }
   };
@@ -132,20 +133,8 @@ const TTSDownloadsScreen = ({ navigation }: TTSDownloadsScreenProps) => {
     }
   };
 
-  const getStatusColor = (status: string): string => {
-    switch (status) {
-      case 'completed':
-        return theme.primary;
-      case 'failed':
-        return theme.error;
-      default:
-        return theme.onSurfaceVariant;
-    }
-  };
-
   const renderDownloadItem = ({ item }: { item: TTSDownloadRow }) => {
     const statusText = getStatusText(item);
-    const statusColor = getStatusColor(item.status);
     const createdDate = dayjs(item.createdAt).format('MMM D, YYYY');
 
     return (

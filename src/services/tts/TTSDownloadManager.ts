@@ -21,7 +21,6 @@ import { azureBatchSynthesis, BatchJobStatus, VoiceSettings, SentenceBoundary } 
 import {
   createTTSDownload,
   updateBatchJobId,
-  updateDownloadProgress,
   markDownloadCompleted,
   markDownloadFailed,
   markDownloadProcessing,
@@ -46,6 +45,7 @@ import {
   IntegrationSettings,
   ChapterReaderSettings,
 } from '@hooks/persisted/useSettings';
+import { ttsLog } from '@utils/logger';
 
 // Event types
 export type DownloadEvent = 
@@ -95,7 +95,7 @@ class TTSDownloadManager extends EventEmitter {
       const dir = this.storageDir();
       if (!dir.exists) {
         dir.create();
-        console.log('[TTSDownloadManager] Created storage directory');
+        ttsLog.debug('[TTSDownloadManager] Created storage directory');
       }
 
       // Initialize Azure services
@@ -104,9 +104,9 @@ class TTSDownloadManager extends EventEmitter {
       // Resume any stuck processing downloads
       await this.resumeProcessingDownloads();
 
-      console.log('[TTSDownloadManager] Initialized successfully');
+      ttsLog.debug('[TTSDownloadManager] Initialized successfully');
     } catch (error) {
-      console.error('[TTSDownloadManager] Initialization failed:', error);
+      ttsLog.error('[TTSDownloadManager] Initialization failed:', error);
       throw error;
     }
   }
@@ -121,7 +121,7 @@ class TTSDownloadManager extends EventEmitter {
   async requestDownload(request: DownloadRequest): Promise<number> {
     const { chapterId, novelId, textElements, voiceSettings } = request;
 
-    console.log('[TTSDownloadManager] Requesting download:', { chapterId, elements: textElements.length });
+    ttsLog.debug('[TTSDownloadManager] Requesting download:', { chapterId, elements: textElements.length });
 
     // Initialize Azure Batch Synthesis (reads current config from MMKV)
     azureBatchSynthesis.initialize();
@@ -154,7 +154,7 @@ class TTSDownloadManager extends EventEmitter {
       throw error;
     }
 
-    console.log('[TTSDownloadManager] Stored text elements for download:', downloadId);
+    ttsLog.debug('[TTSDownloadManager] Stored text elements for download:', downloadId);
 
     // Emit queue changed event
     this.emitQueueChanged();
@@ -189,7 +189,7 @@ class TTSDownloadManager extends EventEmitter {
         const processing = await getProcessingDownloads();
         
         if (processing.length >= this.MAX_CONCURRENT_DOWNLOADS) {
-          console.log('[TTSDownloadManager] Max concurrent downloads reached, waiting...');
+          ttsLog.debug('[TTSDownloadManager] Max concurrent downloads reached, waiting...');
           break;
         }
 
@@ -199,7 +199,7 @@ class TTSDownloadManager extends EventEmitter {
         try {
           await this.processSingleDownload(download);
         } catch (error) {
-          console.error('[TTSDownloadManager] Failed to process download, continuing with queue:', error);
+          ttsLog.error('[TTSDownloadManager] Failed to process download, continuing with queue:', error);
           // Error already handled in processSingleDownload, just continue
         }
 
@@ -207,7 +207,7 @@ class TTSDownloadManager extends EventEmitter {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     } catch (error) {
-      console.error('[TTSDownloadManager] Queue processing error:', error);
+      ttsLog.error('[TTSDownloadManager] Queue processing error:', error);
     } finally {
       this.isProcessing = false;
       this.emitQueueChanged();
@@ -220,7 +220,7 @@ class TTSDownloadManager extends EventEmitter {
    */
   private async processSingleDownload(download: TTSDownloadRow): Promise<void> {
     try {
-      console.log('[TTSDownloadManager] Processing download:', download.id);
+      ttsLog.debug('[TTSDownloadManager] Processing download:', download.id);
 
       // Mark as processing immediately to prevent stuck pending state
       await markDownloadProcessing(download.id);
@@ -238,7 +238,7 @@ class TTSDownloadManager extends EventEmitter {
         voiceSettings: VoiceSettings;
       };
 
-      console.log('[TTSDownloadManager] Retrieved text elements:', textElements.length);
+      ttsLog.debug('[TTSDownloadManager] Retrieved text elements:', textElements.length);
 
       // Submit batch job
       const jobId = await azureBatchSynthesis.submitJob(
@@ -252,14 +252,14 @@ class TTSDownloadManager extends EventEmitter {
       // Update download with job ID
       await updateBatchJobId(download.id, jobId);
 
-      console.log('[TTSDownloadManager] Submitted batch job:', jobId);
+      ttsLog.debug('[TTSDownloadManager] Submitted batch job:', jobId);
 
       // Start polling for this job
       this.startPolling(download.id, jobId);
       // Temp file is kept until job succeeds or retries are exhausted
       
     } catch (error) {
-      console.error('[TTSDownloadManager] Failed to process download:', error);
+      ttsLog.error('[TTSDownloadManager] Failed to process download:', error);
       await markDownloadFailed(download.id, error instanceof Error ? error.message : 'Unknown error');
       
       // Clean up temp file on error
@@ -340,7 +340,7 @@ class TTSDownloadManager extends EventEmitter {
     const inputFilename = `chapter_${chapterId}_${Date.now()}.ssml`;
     await updateBatchJobId(downloadId, jobId, inputFilename);
 
-    console.log('[TTSDownloadManager] Batch job submitted:', { downloadId, jobId });
+    ttsLog.debug('[TTSDownloadManager] Batch job submitted:', { downloadId, jobId });
 
     // Start polling
     this.startPolling(downloadId, jobId);
@@ -366,7 +366,7 @@ class TTSDownloadManager extends EventEmitter {
       try {
         await this.pollJobStatus(downloadId, jobId);
       } catch (error) {
-        console.error('[TTSDownloadManager] Polling error:', error);
+        ttsLog.error('[TTSDownloadManager] Polling error:', error);
         this.stopPolling(downloadId);
       }
     }, this.POLL_INTERVAL_MS);
@@ -391,7 +391,7 @@ class TTSDownloadManager extends EventEmitter {
   private async pollJobStatus(downloadId: number, jobId: string): Promise<void> {
     const status = await azureBatchSynthesis.getJobStatus(jobId);
 
-    console.log('[TTSDownloadManager] Job status:', JSON.stringify({ downloadId, jobId, status }));
+    ttsLog.debug('[TTSDownloadManager] Job status:', JSON.stringify({ downloadId, jobId, status }));
 
     if (status.status === 'Succeeded') {
       this.stopPolling(downloadId);
@@ -428,7 +428,7 @@ class TTSDownloadManager extends EventEmitter {
           const { textElements } = JSON.parse(tempData) as { textElements: string[]; voiceSettings: VoiceSettings };
           elementOffsets = this.computeElementOffsets(sentenceBoundaries, textElements);
         } catch (e) {
-          console.warn('[TTSDownloadManager] Failed to compute element offsets:', e);
+          ttsLog.warn('[TTSDownloadManager] Failed to compute element offsets:', e);
         }
       }
 
@@ -450,7 +450,7 @@ class TTSDownloadManager extends EventEmitter {
       }
       await azureBatchSynthesis.deleteJob(status.id);
 
-      console.log('[TTSDownloadManager] Download completed:', { downloadId, files: audioFiles.length, sizeMB: totalSizeMB, elementOffsets: elementOffsets?.length });
+      ttsLog.debug('[TTSDownloadManager] Download completed:', { downloadId, files: audioFiles.length, sizeMB: totalSizeMB, elementOffsets: elementOffsets?.length });
 
       this.emit('downloadCompleted', {
         type: 'downloadCompleted',
@@ -462,7 +462,7 @@ class TTSDownloadManager extends EventEmitter {
       this.processQueue();
 
     } catch (error) {
-      console.error('[TTSDownloadManager] Failed to handle job success:', error);
+      ttsLog.error('[TTSDownloadManager] Failed to handle job success:', error);
       await markDownloadFailed(downloadId, error instanceof Error ? error.message : 'Download failed');
 
       this.emit('downloadFailed', {
@@ -511,7 +511,7 @@ class TTSDownloadManager extends EventEmitter {
 
     const errorMessage = status.properties?.error?.message || status.error?.message || 'Batch job failed';
 
-    console.error('[TTSDownloadManager] Download failed:', { downloadId, error: errorMessage });
+    ttsLog.error('[TTSDownloadManager] Download failed:', { downloadId, error: errorMessage });
     await markDownloadFailed(downloadId, errorMessage);
 
     // Cleanup temp file and Azure resources
@@ -589,7 +589,7 @@ class TTSDownloadManager extends EventEmitter {
       }
     }
 
-    console.log('[TTSDownloadManager] Download cancelled:', chapterId);
+    ttsLog.debug('[TTSDownloadManager] Download cancelled:', chapterId);
     this.emitQueueChanged();
   }
 
@@ -662,7 +662,7 @@ class TTSDownloadManager extends EventEmitter {
     // Delete from database
     await deleteTTSDownload(chapterId);
 
-    console.log('[TTSDownloadManager] Download deleted:', chapterId);
+    ttsLog.debug('[TTSDownloadManager] Download deleted:', chapterId);
     this.emitQueueChanged();
   }
 
@@ -723,13 +723,13 @@ class TTSDownloadManager extends EventEmitter {
    */
   shutdown(): void {
     // Stop all polling
-    for (const [downloadId, interval] of this.pollingIntervals.entries()) {
+    for (const [_downloadId, interval] of this.pollingIntervals.entries()) {
       clearInterval(interval);
     }
     this.pollingIntervals.clear();
     
     this.isProcessing = false;
-    console.log('[TTSDownloadManager] Shutdown complete');
+    ttsLog.debug('[TTSDownloadManager] Shutdown complete');
   }
 }
 
