@@ -63,17 +63,16 @@ export interface BatchJobResult {
   duration?: number; // Audio duration in seconds
 }
 
-// Azure batch synthesis *.sentence.json entries: { AudioOffset (ms), Duration (ms), Text }
-// No BoundaryType field — the file is sentence-only by name.
-export interface SentenceBoundary {
-  AudioOffset: number; // milliseconds
-  Duration?: number;   // milliseconds
-  Text?: string;
+// Azure batch synthesis *.bookmark.json entries — schema confirmed from real output.
+// AudioOffset is in milliseconds (unlike the real-time SDK which uses 100-ns ticks).
+export interface BookmarkEntry {
+  Text: string;        // The mark= attribute value from the <bookmark> tag
+  AudioOffset: number; // ms from the start of the audio file
 }
 
 export interface DownloadResults {
   audioFiles: string[];
-  sentenceBoundaries: SentenceBoundary[];
+  elementOffsets: number[]; // ms absolute start time of each element in the concatenated audio
 }
 
 class AzureBatchSynthesisService {
@@ -119,38 +118,55 @@ class AzureBatchSynthesisService {
     return !!this.subscriptionKey && !!this.region && !!this.baseEndpoint;
   }
 
+  // Duration (ms) injected into the chapter audio for decorative/unreadable elements.
+  private readonly DECORATIVE_BREAK_MS = 500;
+
   /**
-   * Create SSML document for batch synthesis.
-   * All text elements are combined into one document → one output audio file.
+   * Returns true when text contains no readable characters (letters or digits in any script).
+   * Decorative elements (e.g. "* * *", "——", "…") are replaced with a silence break in the
+   * SSML rather than being spoken literally, preventing garbled audio.
+   */
+  private isDecorativeText(text: string): boolean {
+    return !/[\p{L}\p{N}]/u.test(text);
+  }
+
+  /**
+   * Build a single SSML document for the entire chapter.
+   * A <bookmark mark="element_{i}"/> tag is placed before each element's content so
+   * Azure returns a *.bookmark.json file mapping each mark name to its AudioOffset (ms).
+   * This provides exact per-element timestamps without any estimation.
+   *
+   * Decorative elements (e.g. "* * *", "——") are replaced with a <break> silence so they
+   * don't get spoken literally, while still occupying their correct time slot.
    */
   private createSSMLDocument(texts: string[], voiceSettings: VoiceSettings): string {
     const { voice, rate = 1.0, pitch = 1.0 } = voiceSettings;
-
-    // Use decimal format matching MicrosoftSpeechService online SSML (rate="1.0" not "100%")
     const rateValue = `${rate}`;
     const pitchValue = `${(pitch - 1) * 50}%`;
 
-    const ssmlEntries = texts.map((text) => {
-      const sanitizedText = text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-
-      return `    <voice name="${voice}">
-      <prosody rate="${rateValue}" pitch="${pitchValue}">
+    const entries = texts.map((text, i) => {
+      const content = this.isDecorativeText(text)
+        ? `<break time="${this.DECORATIVE_BREAK_MS}ms"/>`
+        : `<prosody rate="${rateValue}" pitch="${pitchValue}">
         <mstts:express-as style="general">
-          ${sanitizedText}
+          ${text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;')}
         </mstts:express-as>
-      </prosody>
-    </voice>`;
+      </prosody>`;
+      return `    <bookmark mark="element_${i}"/>
+    ${content}`;
     }).join('\n');
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
        xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="en-US">
-${ssmlEntries}
+  <voice name="${voice}">
+${entries}
+  </voice>
 </speak>`;
   }
 
@@ -167,7 +183,8 @@ ${ssmlEntries}
     }
 
     try {
-      // All text elements are combined into one SSML → one output audio file.
+      // One SSML document with <bookmark mark="element_{i}"/> before each element.
+      // Single input → one output audio file (0001.mp3) + one offset file (0001.bookmark.json).
       const texts = request.inputs.map((input) => input.text);
       const ssml = this.createSSMLDocument(texts, request.voiceSettings);
 
@@ -184,7 +201,7 @@ ${ssmlEntries}
         properties: {
           outputFormat: request.outputFormat || 'audio-24khz-96kbitrate-mono-mp3',
           wordBoundaryEnabled: false,
-          sentenceBoundaryEnabled: true,
+          sentenceBoundaryEnabled: false,
           concatenateResult: false,
           decompressOutputFiles: false,
         },
@@ -319,29 +336,32 @@ ${ssmlEntries}
         .sort((a, b) => a.uri.localeCompare(b.uri))
         .map(f => f.uri);
 
-      // Parse sentence boundary JSON (same base name as audio, .json extension)
-      let sentenceBoundaries: SentenceBoundary[] = [];
-
-      // Azure names sentence boundary files "*.sentence.json"
-      const sentenceJsonFiles = (entries as File[])
-        .filter(f => f.uri.endsWith('.sentence.json'))
+      // Parse the bookmark file (0001.bookmark.json) to extract per-element audio offsets.
+      // Each entry has { Text: "element_{i}", AudioOffset: ms } — a direct lookup, no estimation.
+      const bookmarkFiles = (entries as File[])
+        .filter(f => f.uri.endsWith('.bookmark.json'))
         .sort((a, b) => a.uri.localeCompare(b.uri));
 
-      if (sentenceJsonFiles.length > 0) {
+      const elementOffsets: number[] = [];
+      if (bookmarkFiles.length > 0) {
         try {
-          const jsonText = await sentenceJsonFiles[0].text();
-          const parsed = JSON.parse(jsonText);
-          ttsLog.debug('[AzureBatchSynthesis] sentence.json first entry:', JSON.stringify(Array.isArray(parsed) ? parsed[0] : parsed).slice(0, 300));
-          if (Array.isArray(parsed)) {
-            sentenceBoundaries = parsed as SentenceBoundary[];
+          const bookmarks: BookmarkEntry[] = JSON.parse(await bookmarkFiles[0].text());
+          ttsLog.debug('[AzureBatchSynthesis] bookmark.json first entry:', JSON.stringify(bookmarks[0]));
+          // Build a map from mark name → AudioOffset for O(1) lookup
+          const offsetMap = new Map<string, number>(bookmarks.map(b => [b.Text, b.AudioOffset]));
+          // Reconstruct ordered array: element_0, element_1, ...
+          let idx = 0;
+          while (offsetMap.has(`element_${idx}`)) {
+            elementOffsets.push(offsetMap.get(`element_${idx}`)!);
+            idx++;
           }
         } catch (e) {
-          ttsLog.warn('[AzureBatchSynthesis] Failed to parse timing JSON:', e);
+          ttsLog.warn('[AzureBatchSynthesis] Failed to parse bookmark.json:', e);
         }
       }
 
-      ttsLog.debug(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files, ${sentenceBoundaries.length} sentence boundaries`);
-      return { audioFiles, sentenceBoundaries };
+      ttsLog.debug(`[AzureBatchSynthesis] Extracted ${audioFiles.length} audio files, ${elementOffsets.length} element offsets`);
+      return { audioFiles, elementOffsets };
     } catch (error) {
       ttsLog.error('[AzureBatchSynthesis] Download failed:', error);
       throw error;
@@ -407,7 +427,7 @@ ${ssmlEntries}
       }
 
       const result = await response.json();
-      return result.values || [];
+      return result.value || [];
     } catch (error) {
       ttsLog.error('[AzureBatchSynthesis] List jobs failed:', error);
       return [];

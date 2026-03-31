@@ -309,7 +309,24 @@ const TTSController = () => {
           controllerElement.style.top = `${top}px`;
           // Check if TTS is still enabled before starting
           if (hoverElement && reader.generalSettings.val.TTSEnable) {
-            tts.start(hoverElement);
+            if (tts.started) {
+              // TTS is already active — seek directly to the dragged element
+              // without calling tts.start() which would reset the entire queue
+              const idx = tts.allReadableElements.indexOf(hoverElement);
+              if (idx >= 0) {
+                // Reverse-map allReadableElements index to textQueue index
+                const textIdx = tts.elementIndexMap.indexOf(idx);
+                reader.post({
+                  type: 'seek-speak',
+                  index: idx,
+                  textIndex: textIdx >= 0 ? textIdx : idx,
+                });
+              } else {
+                tts.start(hoverElement);
+              }
+            } else {
+              tts.start(hoverElement);
+            }
             controllerElement.firstElementChild.innerHTML = pauseIcon;
           }
         }

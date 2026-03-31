@@ -17,7 +17,7 @@
 
 import { EventEmitter } from './EventEmitter';
 import { azureBlobStorage } from './AzureBlobStorage';
-import { azureBatchSynthesis, BatchJobStatus, VoiceSettings, SentenceBoundary } from './AzureBatchSynthesisService';
+import { azureBatchSynthesis, BatchJobStatus, VoiceSettings } from './AzureBatchSynthesisService';
 import {
   createTTSDownload,
   updateBatchJobId,
@@ -277,83 +277,7 @@ class TTSDownloadManager extends EventEmitter {
     }
   }
 
-  /**
-   * Create SSML for batch synthesis
-   */
-  private createSSML(textElements: string[], voiceSettings: VoiceSettings): string {
-    const { voice, rate = 1.0, pitch = 1.0 } = voiceSettings;
-    
-    // Convert rate/pitch to SSML format
-    const ratePercent = `${Math.round(rate * 100)}%`;
-    const pitchValue = pitch > 1 
-      ? `+${Math.round((pitch - 1) * 50)}%` 
-      : `-${Math.round((1 - pitch) * 50)}%`;
 
-    // Build SSML with each element as a separate sentence
-    const sentences = textElements
-      .map(text => `<s>${this.escapeXml(text)}</s>`)
-      .join('\n');
-
-    return `<?xml version="1.0" encoding="UTF-8"?>
-<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
-  <voice name="${voice}">
-    <prosody rate="${ratePercent}" pitch="${pitchValue}">
-      ${sentences}
-    </prosody>
-  </voice>
-</speak>`;
-  }
-
-  /**
-   * Escape XML special characters
-   */
-  private escapeXml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
-  }
-
-  /**
-   * Submit batch job for download
-   * Internal method called by processSingleDownload
-   */
-  private async submitBatchJob(
-    downloadId: number,
-    chapterId: number,
-    textElements: string[],
-    voiceSettings: VoiceSettings
-  ): Promise<string> {
-    // Submit to Azure Batch Synthesis
-    const jobId = await azureBatchSynthesis.submitJob(
-      {
-        inputs: textElements.map((text, index) => ({ text, id: `element_${index}` })),
-        voiceSettings,
-      },
-      chapterId
-    );
-
-    // Update database with job ID
-    // Get the input filename from the batch service (we need to track this)
-    const inputFilename = `chapter_${chapterId}_${Date.now()}.ssml`;
-    await updateBatchJobId(downloadId, jobId, inputFilename);
-
-    ttsLog.debug('[TTSDownloadManager] Batch job submitted:', { downloadId, jobId });
-
-    // Start polling
-    this.startPolling(downloadId, jobId);
-
-    // Emit started event
-    this.emit('downloadStarted', {
-      type: 'downloadStarted',
-      downloadId,
-      chapterId,
-    });
-
-    return jobId;
-  }
 
   /**
    * Start polling a batch job status
@@ -417,20 +341,11 @@ class TTSDownloadManager extends EventEmitter {
       chapterDirectory.create({ idempotent: true });
       const chapterDir = chapterDirectory.uri;
 
-      const { audioFiles, sentenceBoundaries } = await azureBatchSynthesis.downloadResults(status, chapterDir);
-
-      // Compute element start offsets from sentence boundaries
-      let elementOffsets: number[] | undefined;
+      // Element offsets are now computed inside downloadResults() from per-element word.json
+      // timing files — no sentence-regex estimation needed.
+      const { audioFiles, elementOffsets: computedOffsets } = await azureBatchSynthesis.downloadResults(status, chapterDir);
+      const elementOffsets = computedOffsets.length > 0 ? computedOffsets : undefined;
       const tempFile = this.tempFile(downloadId);
-      if (tempFile.exists && sentenceBoundaries.length > 0) {
-        try {
-          const tempData = await tempFile.text();
-          const { textElements } = JSON.parse(tempData) as { textElements: string[]; voiceSettings: VoiceSettings };
-          elementOffsets = this.computeElementOffsets(sentenceBoundaries, textElements);
-        } catch (e) {
-          ttsLog.warn('[TTSDownloadManager] Failed to compute element offsets:', e);
-        }
-      }
 
       let totalSizeMB = 0;
       for (const filePath of audioFiles) {
@@ -472,32 +387,6 @@ class TTSDownloadManager extends EventEmitter {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
-  }
-
-  /**
-   * Compute per-element audio start offsets (in ms) from Azure sentence boundaries
-   */
-  private computeElementOffsets(
-    boundaries: SentenceBoundary[],
-    textElements: string[]
-  ): number[] {
-    // *.sentence.json contains only sentence entries — no BoundaryType filtering needed
-    const sentenceBoundaries = boundaries;
-    if (sentenceBoundaries.length === 0) return [];
-
-    const offsets: number[] = [];
-    let boundaryIdx = 0;
-
-    for (const text of textElements) {
-      const boundary = sentenceBoundaries[boundaryIdx];
-      // Batch synthesis JSON AudioOffset is already in milliseconds (not 100-ns ticks like real-time TTS SDK)
-      offsets.push(boundary ? boundary.AudioOffset : (offsets[offsets.length - 1] ?? 0));
-      // Count sentences in this element to advance to next element's first boundary
-      const sentenceCount = Math.max(1, (text.match(/[.!?]+(?:\s|$)/g) || []).length);
-      boundaryIdx += sentenceCount;
-    }
-
-    return offsets;
   }
 
   /**

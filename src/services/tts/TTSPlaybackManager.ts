@@ -477,8 +477,13 @@ class TTSPlaybackManager extends EventEmitter {
       // Cancel preloading
       await this.preloader.cancelPreloading();
 
-      // Stop foreground service
-      NativeTTSForegroundService.stopService();
+      // Stop foreground service — but only for real stops.
+      // When called from play(), we're about to restart immediately, so leave the
+      // service running. Stopping and re-starting from the background crashes on
+      // Android 14+ (API 34+) due to background foreground-service start restrictions.
+      if (!fromPlay) {
+        NativeTTSForegroundService.stopService();
+      }
 
       // Reset state
       this.setState('stopped');
@@ -600,6 +605,27 @@ class TTSPlaybackManager extends EventEmitter {
       await this.currentSound.setPositionAsync(0);
     } else {
       await this.seek(this.currentIndex);
+    }
+  }
+
+  /**
+   * Seek to a specific element index without stopping playback.
+   * In offline mode, scrubs the single chapter audio file to the element's start offset.
+   * In online mode, delegates to seek() which switches to the preloaded audio for that element.
+   */
+  async seekToElement(textIndex: number): Promise<void> {
+    ttsLog.debug('[TTSPlaybackManager] seekToElement() called with textIndex:', textIndex, 'isOfflineMode:', this.isOfflineMode);
+    if (this.isOfflineMode) {
+      if (!this.currentSound) {
+        ttsLog.warn('[TTSPlaybackManager] seekToElement() called with no active sound');
+        return;
+      }
+      const offsetMs = this.elementOffsets[textIndex] ?? 0;
+      this.lastEmittedElementIndex = textIndex - 1; // ensure elementChange fires for this index
+      await this.currentSound.setPositionAsync(offsetMs);
+      ttsLog.debug('[TTSPlaybackManager] seekToElement() offline - seeked to', offsetMs, 'ms for element', textIndex);
+    } else {
+      await this.seek(textIndex);
     }
   }
 
