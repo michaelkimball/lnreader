@@ -4,3 +4,6 @@ const pauseIcon =
   '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#e8eaed"><path d="M564-228v-504h168v504H564Zm-336 0v-504h168v504H228Z"/></svg>';
 const resumeIcon =
   '<svg xmlns="http://www.w3.org/2000/svg" height="20px" viewBox="0 -960 960 960" width="20px" fill="#e8eaed"><path d="M240-240v-480h72v480h-72Zm144 0 384-240-384-240v480Z"/></svg>';
+
+// Expose on window so React Native injected scripts can reliably access them.
+window.ttsIcons = { volumnIcon, pauseIcon, resumeIcon };

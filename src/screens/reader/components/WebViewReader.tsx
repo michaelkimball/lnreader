@@ -39,7 +39,14 @@ import { showToast } from '@utils/showToast';
 import { ttsPlaybackManager, PlaybackEvent } from '@services/tts/TTSPlaybackManager';
 import { VoiceSettings, TTSEngine } from '@services/tts/TTSAudioGenerator';
 import { handleExtractionResult } from '@utils/tts/extractChapterText';
+import { hasCompletedDownload } from '@database/queries/TTSDownloadQueries';
 import { uiLog } from '@utils/logger';
+
+const TTS_AUTOSTART_KEY = 'tts_autostart_pending';
+// Module-level flag: true while the new chapter's audio is being handed off in background.
+// The old component's unmount cleanup must NOT call stop() during this window or it will
+// kill the audio that the new component just started loading.
+let backgroundHandoffInFlight = false;
 
 type WebViewPostEvent = {
   type: string;
@@ -118,9 +125,98 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   const ttsQueueIndexRef = useRef<number>(0);
   const ttsFullQueueInitializedRef = useRef<boolean>(false);
   const ttsElementIndexMapRef = useRef<number[]>([]); // textQueue index → allReadableElements index
+  // Always tracks the current chapter.id even when the component doesn't remount
+  // (e.g. background auto-advance via setChapter()). The [] unmount cleanup captures
+  // stopTTS from the first render whose closure has the old chapter.id — using this
+  // ref ensures the correct chapter key is written to MMKV on navigate-away.
+  const chapterIdRef = useRef(chapter.id);
+  chapterIdRef.current = chapter.id;
+  // Set when a background auto-advance lands on a non-downloaded chapter.
+  // The AppState handler checks this on foreground restore and injects tts.start()
+  // via WebView so online TTS kicks off when the user unlocks their phone.
+  const pendingForegroundAutoStartRef = useRef(false);
 
   // TTS position persistence helper
   const getTTSPositionKey = (chapterId: number) => `tts_position_${chapterId}`;
+
+  // Background auto-start: when MMKV flag is set (from background chapter auto-advance),
+  // start offline playback directly from RN without waiting for WebView JS.
+  useEffect(() => {
+    const pendingAutostart = getMMKVObject<boolean>(TTS_AUTOSTART_KEY);
+    if (!pendingAutostart) return;
+
+    void (async () => {
+      const hasOffline = await hasCompletedDownload(chapter.id);
+      if (!hasOffline) {
+        setMMKVObject(TTS_AUTOSTART_KEY, null);
+        backgroundHandoffInFlight = false; // no handoff, safe to clear
+        // Chapter not downloaded: can't play audio in background.
+        // Reset queue state from the previous chapter's session and signal the
+        // AppState handler to start online TTS via WebView when the user unlocks.
+        ttsQueueRef.current = [];
+        ttsQueueIndexRef.current = 0;
+        ttsFullQueueInitializedRef.current = false;
+        isTTSReadingRef.current = false;
+        // Clear any stale saved position for this chapter — it's a fresh auto-advance
+        // continuation, so playback must start from element 0, not a previous session.
+        const freshKey = getTTSPositionKey(chapter.id);
+        setMMKVObject(freshKey, null);
+        pendingForegroundAutoStartRef.current = true;
+        uiLog.debug('[WebViewReader] Next chapter not downloaded — will auto-start online TTS on foreground restore');
+        return;
+      }
+
+      setMMKVObject(TTS_AUTOSTART_KEY, null);
+      // Prevent onLoadEnd from also injecting tts.start() (would fail in background anyway)
+      autoStartTTSRef.current = false;
+
+      const engine = readerSettingsRef.current.tts?.engine || 'expo' as TTSEngine;
+      const integrationSettings = getMMKVObject<IntegrationSettings>(INTEGRATION_SETTINGS);
+      let voice = '';
+      if (engine === 'microsoft') {
+        voice = readerSettingsRef.current.tts?.microsoftVoice?.shortName || '';
+        if (integrationSettings?.microsoftSpeech?.enabled && !microsoftSpeechService.isReady()) {
+          microsoftSpeechService.initialize({
+            subscriptionKey: integrationSettings.microsoftSpeech.subscriptionKey!,
+            region: integrationSettings.microsoftSpeech.region!,
+            voice,
+          });
+        }
+      } else {
+        voice = readerSettingsRef.current.tts?.voice?.identifier || '';
+      }
+      const voiceSettings: VoiceSettings = {
+        voice,
+        pitch: readerSettingsRef.current.tts?.pitch || 1,
+        rate: readerSettingsRef.current.tts?.rate || 1,
+        engine,
+      };
+
+      uiLog.debug('[WebViewReader] Background auto-start: starting offline playback for chapter', chapter.id);
+      // Sentinel queue: length > 0 so background queueEnd logic can detect session,
+      // and index 0 < length 1 comparison correctly falls to chapter-end auto-advance.
+      ttsQueueRef.current = [''];
+      ttsQueueIndexRef.current = 0;
+      ttsFullQueueInitializedRef.current = true;
+      isTTSReadingRef.current = true;
+      showTTSNotification({
+        novelName: novel?.name || 'Unknown',
+        chapterName: chapter.name,
+        coverUri: novel?.cover || '',
+        isPlaying: true,
+      });
+      // Keep backgroundHandoffInFlight = true until play() fully completes.
+      // play() awaits playFromOfflineFiles() → NativeTTSForegroundService.startService()
+      // and Audio.Sound.createAsync(). The old component's stopTTS() must not call
+      // stop() / stopService() until after both of those resolve.
+      try {
+        await ttsPlaybackManager.play([''], 0, chapter.id, novel?.id || 0, voiceSettings);
+      } finally {
+        backgroundHandoffInFlight = false;
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapter.id]);
 
   useEffect(() => {
     readerSettingsRef.current = readerSettings;
@@ -297,34 +393,60 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
       const previousState = appStateRef.current;
       appStateRef.current = nextState;
       
-      // Sync WebView UI when returning to foreground from background
+      // When a background auto-advance landed on a non-downloaded chapter we can't
+      // play audio in background. Defer to foreground restore: inject tts.start()
+      // via WebView so the user gets online TTS as soon as they unlock their phone.
+      if (nextState === 'active' && (previousState === 'background' || previousState === 'inactive') && pendingForegroundAutoStartRef.current) {
+        pendingForegroundAutoStartRef.current = false;
+        uiLog.debug('[WebViewReader] Foreground restore — starting online TTS for non-downloaded chapter');
+        // onLoadEnd already ran in background and set up the DOM (including any stale
+        // tts.savedPosition). Clear savedPosition so playback starts from element 0,
+        // then call tts.start() after a short settle delay.
+        setTimeout(() => {
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (window.tts && reader.generalSettings.val.TTSEnable) {
+                tts.savedPosition = null;
+                tts.start();
+              }
+            })();
+          `);
+        }, 200);
+      }
+
+      // Sync WebView TTS UI when returning to foreground.
+      // Only inject if allReadableElements is already populated (tts.start() was called
+      // before background). For background-auto-start sessions allReadableElements is
+      // empty — onLoadEnd will handle that case after the page fully loads.
       if (nextState === 'active' && (previousState === 'background' || previousState === 'inactive') && isTTSReadingRef.current) {
         const index = ttsQueueIndexRef.current;
         uiLog.debug('[WebViewReader] Returning to foreground - syncing UI at index:', index);
-        
+
         webViewRef.current?.injectJavaScript(`
           (function() {
-            if (window.tts && window.tts.allReadableElements) {
-              const idx = ${index};
-              if (idx >= 0 && idx < tts.allReadableElements.length) {
-                // Remove all existing highlights
-                tts.allReadableElements.forEach(el => el?.classList?.remove('highlight'));
-                
-                // Update TTS state
-                tts.elementsRead = idx;
-                tts.currentElement = tts.allReadableElements[idx];
-                tts.prevElement = idx > 0 ? tts.allReadableElements[idx - 1] : null;
-                tts.started = true;
-                tts.reading = true;
-                
-                // Add highlight and scroll to current element
-                if (tts.currentElement) {
-                  tts.currentElement.classList.add('highlight');
-                  tts.scrollToElement(tts.currentElement);
-                }
-                
-                console.log('[WebView TTS] UI synced to element', idx, 'of', tts.totalElements);
+            if (!window.tts || !tts.allReadableElements || tts.allReadableElements.length === 0) {
+              // allReadableElements not built yet (background auto-start).
+              // onLoadEnd will sync after the page fully loads — skip for now.
+              console.log('[WebView TTS] Skipping foreground sync — allReadableElements empty');
+              return;
+            }
+            var idx = ${index};
+            tts.started = true;
+            tts.reading = true;
+            var controller = document.getElementById('TTS-Controller');
+            if (controller && controller.firstElementChild && window.ttsIcons) {
+              controller.firstElementChild.innerHTML = window.ttsIcons.pauseIcon;
+            }
+            if (idx >= 0 && idx < tts.allReadableElements.length) {
+              tts.allReadableElements.forEach(function(el) { el && el.classList && el.classList.remove('highlight'); });
+              tts.elementsRead = idx + 1;
+              tts.currentElement = tts.allReadableElements[idx];
+              tts.prevElement = idx > 0 ? tts.allReadableElements[idx - 1] : null;
+              if (tts.currentElement) {
+                tts.currentElement.classList.add('highlight');
+                tts.scrollToElement && tts.scrollToElement(tts.currentElement);
               }
+              console.log('[WebView TTS] Foreground sync at element', idx, 'of', tts.totalElements);
             }
           })();
         `);
@@ -362,8 +484,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             (function() {
               if (window.tts) { tts.reading = false; }
               var c = document.getElementById('TTS-Controller');
-              if (c && c.firstElementChild && typeof resumeIcon !== 'undefined') {
-                c.firstElementChild.innerHTML = resumeIcon;
+              if (c && c.firstElementChild && window.ttsIcons) {
+                c.firstElementChild.innerHTML = window.ttsIcons.resumeIcon;
               }
             })();
           `);
@@ -372,8 +494,8 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             (function() {
               if (window.tts) { tts.reading = true; }
               var c = document.getElementById('TTS-Controller');
-              if (c && c.firstElementChild && typeof pauseIcon !== 'undefined') {
-                c.firstElementChild.innerHTML = pauseIcon;
+              if (c && c.firstElementChild && window.ttsIcons) {
+                c.firstElementChild.innerHTML = window.ttsIcons.pauseIcon;
               }
             })();
           `);
@@ -383,19 +505,22 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
 
     const handleElementChange = (event: PlaybackEvent) => {
       if (event.type === 'elementChange' && event.index !== undefined) {
-        ttsQueueIndexRef.current = event.index;
-        uiLog.debug('[WebViewReader] Element changed to index:', event.index);
+        // event.index is the textQueue index from TTSPlaybackManager.
+        // Convert it to the allReadableElements index so that ttsQueueIndexRef
+        // stays consistent with the allReadableIdx that speak events emit.
+        // stopTTS() reads this ref and stores it as tts.savedPosition, which
+        // core.js uses as `this.elementsRead` (an allReadableElements index).
+        const indexMap = ttsElementIndexMapRef.current;
+        const realIdx = indexMap.length > 0 && event.index < indexMap.length
+          ? indexMap[event.index]
+          : event.index;
+        ttsQueueIndexRef.current = realIdx;
+        uiLog.debug('[WebViewReader] Element changed to index:', event.index, '(allReadable:', realIdx, ')');
 
         // In full-queue mode the WebView doesn't drive playback, so it never
         // calls tts.next() itself. Push a highlight update directly so the
         // reader stays in sync with what is actually playing.
         if (ttsFullQueueInitializedRef.current) {
-          // Map the PlaybackManager's queue index (into textQueue) to the
-          // correct allReadableElements index via the stored indexMap.
-          const indexMap = ttsElementIndexMapRef.current;
-          const realIdx = indexMap.length > 0 && event.index < indexMap.length
-            ? indexMap[event.index]
-            : event.index;
           webViewRef.current?.injectJavaScript(`
             (function() {
               if (window.tts && tts.allReadableElements && tts.allReadableElements.length) {
@@ -439,6 +564,30 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
               ttsPlaybackManager.seek(nextIndex);
               return;
             }
+
+            // End of queue reached in background — check for auto-page-advance
+            const autoPageAdvance = readerSettingsRef.current.tts?.autoPageAdvance === true;
+            uiLog.debug('[WebViewReader] Background queue end - autoPageAdvance:', autoPageAdvance, 'nextChapter:', !!nextChapter);
+            if (autoPageAdvance && nextChapter) {
+              uiLog.debug('[WebViewReader] Background auto-advancing to next chapter');
+              // Persist intent in MMKV so the new chapter's component instance picks it up.
+              // autoStartTTSRef alone doesn't survive if a new component instance is mounted.
+              backgroundHandoffInFlight = true;
+              setMMKVObject(TTS_AUTOSTART_KEY, true);
+              // Do NOT set autoStartTTSRef.current here — the MMKV useEffect will handle
+              // the actual start and will clear autoStartTTSRef to prevent onLoadEnd double-start.
+              // Clear saved position for completed chapter before navigating
+              const clearKey = getTTSPositionKey(chapter.id);
+              setMMKVObject(clearKey, null);
+              navigateChapter('NEXT');
+              return;
+            }
+
+            // No auto-advance — stop cleanly
+            isTTSReadingRef.current = false;
+            ttsFullQueueInitializedRef.current = false;
+            dismissTTSNotification();
+            return;
           }
           
           // Foreground: use WebView queue
@@ -479,7 +628,16 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
   const stopTTS = async () => {
     uiLog.debug('[WebViewReader] stopTTS called - isTTSReading:', isTTSReadingRef.current, 
                 'queueLength:', ttsQueueRef.current.length, 
-                'currentIndex:', ttsQueueIndexRef.current);
+                'currentIndex:', ttsQueueIndexRef.current,
+                'backgroundHandoffInFlight:', backgroundHandoffInFlight);
+
+    // If a background chapter hand-off is in flight, the new chapter's component already
+    // started audio loading. Calling stop() here would race with createAsync() and
+    // cause a native crash. Skip the stop — the new component owns the session now.
+    if (backgroundHandoffInFlight) {
+      uiLog.debug('[WebViewReader] Skipping stop() — background hand-off in flight');
+      return;
+    }
     
     // Save current TTS position from React Native state (not WebView, which might be destroyed).
     // Gate on queue presence, NOT isTTSReadingRef — that flag is false when paused, so
@@ -487,9 +645,11 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
     const currentIndex = ttsQueueIndexRef.current;
     const totalElements = ttsQueueRef.current.length;
     if (totalElements > 0 && currentIndex > 0) {
-      const positionKey = getTTSPositionKey(chapter.id);
+      // Use chapterIdRef (not chapter.id) so the save goes to the correct chapter's key
+      // even when background auto-advance changed the chapter without remounting this component.
+      const positionKey = getTTSPositionKey(chapterIdRef.current);
       setMMKVObject(positionKey, { position: currentIndex, total: totalElements });
-      uiLog.debug('[WebViewReader] Saved TTS position on stop:', currentIndex, 'of', totalElements);
+      uiLog.debug('[WebViewReader] Saved TTS position on stop:', currentIndex, 'of', totalElements, 'for chapter', chapterIdRef.current);
     } else {
       uiLog.debug('[WebViewReader] NOT saving position - no active queue or at start (queueLength:', totalElements, 'currentIndex:', currentIndex, ')');
     }
@@ -575,6 +735,45 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
                 window.tts.savedPosition = ${savedPosition.position};
                 console.log("[WebView] TTS saved position set:", tts.savedPosition);
               }
+            })();
+          `);
+        }
+
+        // Background auto-start sync: page is now fully loaded so window.tts is stable
+        // and getAllReadableElements will find all elements. Sync WebView TTS state so
+        // highlight, button icon, and onclick handler are correct when user unlocks.
+        if (isTTSReadingRef.current && ttsFullQueueInitializedRef.current) {
+          const syncIdx = ttsQueueIndexRef.current;
+          uiLog.debug('[WebViewReader] onLoadEnd TTS sync at index:', syncIdx);
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              if (!window.tts) return;
+              // Rebuild allReadableElements from the fully-loaded DOM.
+              tts.allReadableElements = tts.getAllReadableElements
+                ? tts.getAllReadableElements(reader.chapterElement)
+                : [];
+              tts.totalElements = tts.allReadableElements.length;
+              // Clear savedPosition — RN side is already playing; don't let a stale
+              // MMKV position restart TTS via tts.start() if the user presses the button.
+              tts.savedPosition = null;
+              tts.started = true;
+              tts.reading = true;
+              var controller = document.getElementById('TTS-Controller');
+              if (controller && controller.firstElementChild && window.ttsIcons) {
+                controller.firstElementChild.innerHTML = window.ttsIcons.pauseIcon;
+              }
+              var idx = ${syncIdx};
+              if (idx >= 0 && idx < tts.allReadableElements.length) {
+                tts.allReadableElements.forEach(function(el) { el && el.classList && el.classList.remove('highlight'); });
+                tts.elementsRead = idx + 1;
+                tts.currentElement = tts.allReadableElements[idx];
+                tts.prevElement = idx > 0 ? tts.allReadableElements[idx - 1] : null;
+                if (tts.currentElement) {
+                  tts.currentElement.classList.add('highlight');
+                  tts.scrollToElement && tts.scrollToElement(tts.currentElement);
+                }
+              }
+              console.log('[WebView TTS] onLoadEnd sync: element', idx, 'of', tts.totalElements);
             })();
           `);
         }
@@ -804,6 +1003,19 @@ const WebViewReader: React.FC<WebViewReaderProps> = ({ onPress }) => {
             setMMKVObject(clearKey, null);
             uiLog.debug('[WebViewReader] Cleared TTS position for chapter', chapter.id);
             break;
+          case 'seek-speak': {
+            // Drag-seek: WebView already updated highlight — just scrub RN-side audio.
+            // event.index = allReadableElements index (for position saving)
+            // event.textIndex = textQueue index (for PM seek / elementOffsets lookup)
+            if (typeof event.index === 'number') {
+              ttsQueueIndexRef.current = event.index; // allReadableIdx — consistent with stopTTS save
+            }
+            const seekTextIdx = typeof event.textIndex === 'number' ? event.textIndex : event.index;
+            if (typeof seekTextIdx === 'number') {
+              ttsPlaybackManager.seekToElement(seekTextIdx); // textQueue idx for PM
+            }
+            break;
+          }
         }
       }}
       source={{

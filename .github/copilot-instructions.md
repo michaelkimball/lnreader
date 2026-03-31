@@ -323,9 +323,12 @@ android/.../js/core.js  # WebView TTS engine (DOM traversal, element queue)
 1. **Never call `tts.stop()` in WebView between elements** — destroys the element queue
 2. **Use `fromPlay=true` when `stop()` is called from within `play()`** — prevents `queueEnd` feedback loop
 3. **Only `handleQueueEnd` should inject `tts.next()`** — not `handleElementChange`
-4. **Position resume requires dual-condition check**: `isServiceRunning && savedState` (not either alone)
-5. **Track unmount-critical state in React refs**, not component state (WebView is destroyed on unmount)
-6. **Audio files use `expo-file-system`, not MMKV** (MMKV is for metadata/position only)
+4. **Track unmount-critical state in React refs**, not component state (WebView is destroyed on unmount)
+5. **Audio files use `expo-file-system`, not MMKV** (MMKV is for metadata/position only)
+6. **Position MMKV key is `tts_position_{chapterId}`**, data shape `{ position: number, total: number }`
+7. **Never use `chapter.id` directly in a `useEffect([], [])` cleanup** — the closure is stale. Use `chapterIdRef.current` which is updated on every render.
+8. **Never call `tts.start()` mid-session for seeking** — use `seek-speak` → `seekToElement()` instead. `tts.start()` calls `tts.stop()` internally, destroying the element queue.
+9. **Background auto-advance to a non-downloaded chapter**: set `pendingForegroundAutoStartRef = true` and defer `tts.start()` to the AppState `'active'` handler. Clear `tts.savedPosition` before calling `tts.start()` to prevent starting at a stale position.
 
 ---
 

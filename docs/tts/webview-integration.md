@@ -1,7 +1,7 @@
 # TTS WebView Integration
 
 **Files:** `android/app/src/main/assets/js/core.js`, `src/screens/reader/components/WebViewReader.tsx`
-**Last Updated:** March 30, 2026
+**Last Updated:** March 31, 2026
 
 ---
 
@@ -210,10 +210,21 @@ case 'stop-speak':
 ### Key React Refs (Survive Renders, Available on Unmount)
 
 ```typescript
-const ttsQueueIndexRef = useRef<number>(0);    // Current element index
-const isTTSReadingRef = useRef<boolean>(false); // Is TTS active?
-const autoStartTTSRef = useRef<boolean>(false); // Auto-start after chapter nav
+const ttsQueueRef = useRef<string[]>([]);          // Active text queue
+const ttsQueueIndexRef = useRef<number>(0);         // Current element index (allReadableElements)
+const ttsElementIndexMapRef = useRef<number[]>([]); // textQueue idx → allReadableElements idx
+const ttsFullQueueInitializedRef = useRef<boolean>(false); // Full offline queue loaded
+const isTTSReadingRef = useRef<boolean>(false);     // TTS session active?
+const autoStartTTSRef = useRef<boolean>(false);     // Auto-start after foreground chapter nav
 const readerSettingsRef = useRef<ChapterReaderSettings>();
+// Always tracks current chapter.id even when component doesn't remount
+// (e.g., background auto-advance via setChapter()). The [] unmount cleanup
+// closes over the initial chapter.id — this ref ensures the correct MMKV key
+// is written even after context-driven chapter changes.
+const chapterIdRef = useRef(chapter.id);           // Updated on every render
+// Set when background auto-advance lands on a non-downloaded chapter.
+// Consumed by the AppState 'active' handler to trigger online TTS after unlock.
+const pendingForegroundAutoStartRef = useRef(false);
 ```
 
 > Refs are used instead of state for values needed during component unmount (when WebView is already destroyed).
@@ -252,6 +263,46 @@ const handleQueueEnd = (event: PlaybackEvent) => {
 
 > Do NOT inject `tts.stop()` from `handleQueueEnd` — this resets the WebView queue and causes the double-stop feedback loop. See [known-bugs-and-patterns.md](./known-bugs-and-patterns.md#1-stop-cascade).
 
+---
+
+## Background Auto-Advance
+
+When `autoPageAdvance` is enabled, `handleQueueEnd` (with `reason: 'completed'`) navigates to the next chapter while the app is in the background (phone locked / screen off). WebView does not execute JS in the background, so the standard `tts.next()` injection path cannot be used.
+
+### Downloaded Chapter → Downloaded Chapter
+
+1. `handleQueueEnd` sets `TTS_AUTOSTART_KEY` in MMKV and calls `navigateChapter('NEXT')`.
+2. The `chapter.id` `useEffect` fires on the new chapter. `hasCompletedDownload()` returns true.
+3. Sets a sentinel queue (`ttsQueueRef.current = ['']`, length 1) so background queue-end logic can detect session boundaries.
+4. Calls `ttsPlaybackManager.play([''], 0, chapter.id, ...)` which loads and plays the offline MP3.
+5. `elementChange` events update `ttsQueueIndexRef` as the audio progresses.
+6. On foreground restore (unlock): `AppState 'active'` handler syncs the WebView highlight and button icon via `injectJavaScript`.
+
+### Downloaded Chapter → Non-Downloaded Chapter
+
+1. `handleQueueEnd` sets `TTS_AUTOSTART_KEY` and calls `navigateChapter('NEXT')`.
+2. The `chapter.id` `useEffect` fires. `hasCompletedDownload()` returns false.
+3. Clears `TTS_AUTOSTART_KEY` and `backgroundHandoffInFlight`.
+4. Resets all queue refs to empty/false/0 (stale state from the finished chapter).
+5. Clears the new chapter's MMKV position (prevents stale position from a previous session poisoning `onLoadEnd`'s `savedPosition` injection).
+6. Sets `pendingForegroundAutoStartRef.current = true`.
+7. `onLoadEnd` runs in background — DOM is fully built, but `tts.start()` is NOT called (audio can't play without the foreground).
+8. On foreground restore (unlock): `AppState 'active'` handler sees `pendingForegroundAutoStartRef`, clears it, and after 200ms injects:
+   ```javascript
+   tts.savedPosition = null;  // Belt-and-suspenders: clear any onLoadEnd injection
+   tts.start();               // Begins online TTS from element 0
+   ```
+
+### `backgroundHandoffInFlight` Guard
+
+`backgroundHandoffInFlight` is a module-level boolean (not a ref) that prevents the *previous* chapter's `stopTTS()` cleanup from calling `ttsPlaybackManager.stop()` while the *new* chapter's `play()` is still resolving `createAsync()`. This avoids a native crash from destroying the sound object mid-creation.
+
+```
+[Old chapter cleanup] stopTTS() ──► backgroundHandoffInFlight? yes → skip stop()
+                                                     ↕
+[New chapter play()]  play() ──► createAsync() resolves → backgroundHandoffInFlight = false
+```
+
 ### Component Cleanup on Unmount
 
 ```typescript
@@ -264,8 +315,14 @@ useEffect(() => {
 }, []);
 
 const stopTTS = async () => {
-  if (isTTSReadingRef.current) {
-    saveTTSState(chapter.id, ttsQueueIndexRef.current, false);
+  const currentIndex = ttsQueueIndexRef.current;
+  const totalElements = ttsQueueRef.current.length;
+  // Gate on queue presence, NOT isTTSReadingRef (false when paused).
+  // Use chapterIdRef.current (not chapter.id) — the [] closure captures the
+  // initial chapter.id; chapterIdRef always reflects the latest value.
+  if (totalElements > 0 && currentIndex > 0) {
+    const positionKey = `tts_position_${chapterIdRef.current}`;
+    setMMKVObject(positionKey, { position: currentIndex, total: totalElements });
   }
   await ttsPlaybackManager.stop();
   NativeTTSForegroundService.stopService();
@@ -278,18 +335,21 @@ const stopTTS = async () => {
 
 **Problem:** WebView is destroyed when navigating away from a chapter. Any state stored in WebView JS is lost.
 
-**Solution:** React Native is the persistence layer.
+**Solution:** React Native is the persistence layer. MMKV key: `tts_position_{chapterId}`. Data shape: `{ position: number, total: number }`.
 
 ### Save Flow
 
-1. Every `speak` event → `saveTTSState(chapterId, elementIndex, true)` → MMKV key `tts_state_{chapterId}`
-2. On unmount → `saveTTSState(chapterId, ttsQueueIndexRef.current, false)`
+Positions are saved from two sources:
+
+1. **While reading:** The WebView posts a `save-tts-position` event (e.g., from `tts.speak()`) — React Native writes `{ position: event.position, total: event.total }` to MMKV.
+2. **On navigate-away (unmount):** `stopTTS()` reads `ttsQueueIndexRef.current` and `ttsQueueRef.current.length` and writes to MMKV, gated on `totalElements > 0 && currentIndex > 0`.
+   - Uses `chapterIdRef.current` (not the closure-captured `chapter.id`) to handle background auto-advance without remount. See [bug #15](./known-bugs-and-patterns.md#15-wrong-chapter-position-saved-after-background-auto-advance-stale-closure).
 
 ### Restore Flow
 
-1. Chapter opens → read `loadTTSState(chapterId)` from MMKV
-2. After WebView loads → inject `window.tts.savedPosition = ${savedState.elementIndex}`
-3. `tts.start()` in WebView checks `this.savedPosition`:
+1. Chapter opens → WebView's `onLoadEnd` fires → read `tts_position_{chapterId}` from MMKV.
+2. If position exists: inject `window.tts.savedPosition = ${savedPosition.position}` into WebView.
+3. When user starts TTS, `tts.start()` checks `this.savedPosition`:
    ```javascript
    this.start = function(startFromIndex) {
      const from = typeof startFromIndex === 'number'
@@ -301,6 +361,8 @@ const stopTTS = async () => {
    };
    ```
 
+**Important:** For background auto-advance to a non-downloaded chapter, `onLoadEnd` runs while the phone is locked and injects any stale `savedPosition`. The foreground restore path explicitly sets `tts.savedPosition = null` before calling `tts.start()` to prevent resuming from a stale session. See [bug #17](./known-bugs-and-patterns.md#17-wrong-start-position-on-foreground-restore-of-non-downloaded-chapter).
+
 ### Clear Flow
 
-When a chapter completes naturally, WebViewReader handles `queueEnd` with `reason: 'completed'` at the final element and deletes the MMKV key: `deleteTTSState(chapterId)`.
+When a chapter completes naturally, `handleQueueEnd` receives `reason: 'completed'`, clears the MMKV key (`setMMKVObject(key, null)`), and navigates to the next chapter if auto-advance is enabled.
